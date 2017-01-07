@@ -170,6 +170,14 @@ typedef struct Cmdline_Params
 	double target_miss_rate;
       }
     wset;
+    struct
+      {
+	u_int num_sessions;	/* # of user-sessions */
+	Time think_time;	/* user think time between calls */
+        char *serial;           /* serial number of duts */
+	char *file;		/* name of the file where session defs are */
+      }
+    cwmp;
   }
 Cmdline_Params;
 

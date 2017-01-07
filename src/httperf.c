@@ -163,6 +163,7 @@ static struct option longopts[] = {
 	{"wsesslog", required_argument, (int *) &param.wsesslog, 0},
 	{"wsesspage", required_argument, (int *) &param.wsesspage, 0},
 	{"wset", required_argument, (int *) &param.wset, 0},
+	{"cwmp", required_argument, (int *) &param.cwmp, 0},
 	{0, 0, 0, 0}
 };
 
@@ -189,6 +190,7 @@ usage(void)
 	       "\t[--think-timeout X] [--timeout X] [--verbose] [--version]\n"
 	       "\t[--wlog y|n,file] [--wsess N,N,X] [--wsesslog N,X,file]\n"
 	       "\t[--wset N,X]\n"
+	       "\t[--cwmp y|n,file]\n"
 	       "\t[--runtime X]\n"
 	       "\t[--use-timer-cache]\n"
 	       "\t[--periodic-stats]\n", prog_name);
@@ -232,7 +234,7 @@ main(int argc, char **argv)
 {
 	extern Load_Generator uri_fixed, uri_wlog, uri_wset, conn_rate,
 	    call_seq;
-	extern Load_Generator wsess, wsesslog, wsesspage, sess_cookie, misc;
+	extern Load_Generator wsess, wsesslog, wsesspage, sess_cookie, misc, cwmp;
 	extern Stat_Collector stats_basic, session_stat;
 	extern Stat_Collector stats_print_reply;
 	extern char    *optarg;
@@ -917,6 +919,66 @@ main(int argc, char **argv)
 					fputc('\n', stderr);
 					exit(1);
 				}
+			} else if (flag == &param.cwmp) {
+				num_gen = 1;	/* XXX fix me---somehow */
+				gen[0] = &cwmp;
+
+				stat[num_stats++] = &session_stat;
+
+				errno = 0;
+				name = "bad number of sessions (1st param)";
+				param.cwmp.num_sessions =
+				    strtoul(optarg, &end, 0);
+				if (end == optarg || errno == ERANGE)
+					goto bad_cwmp_param;
+				optarg = end + 1;
+
+				name = "bad user think time (2nd param)";
+				if (*end != ',')
+					goto bad_cwmp_param;
+				optarg = end + 1;
+
+				param.cwmp.think_time =
+				    strtod(optarg, &end);
+				if (end == optarg || errno == ERANGE
+				    || param.cwmp.think_time < 0.0)
+					goto bad_cwmp_param;
+
+				name = "bad session filename (3rd param)";
+				if (*end != ',')
+					goto bad_cwmp_param;
+				optarg = end + 1;
+
+				/*
+				 * simulate parsing of string 
+				 */
+				param.cwmp.file = optarg;
+				if ((end = strchr(optarg, ',')) == NULL)
+					/*
+					 * must be last param, position end at 
+					 * final \0 
+					 */
+					end = optarg + strlen(optarg);
+				else
+					/*
+					 * terminate end of string 
+					 */
+					*end++ = '\0';
+				optarg = end;
+
+				name = "extraneous parameter";
+				if (*end) {
+				      bad_cwmp_param:
+					fprintf(stderr,
+						"%s: %s in --wsesslog arg (rest: `%s')",
+						prog_name, name, end);
+					if (errno)
+						fprintf(stderr, ": %s",
+							strerror(errno));
+					fputc('\n', stderr);
+					exit(1);
+				}
+				session_workload = 1;
 			}
 			break;
 
@@ -1268,6 +1330,15 @@ main(int argc, char **argv)
 			printf(" --wset=%u,%.3f",
 			       param.wset.num_files,
 			       param.wset.target_miss_rate);
+	}
+
+        if (param.cwmp.num_sessions) {
+		/*
+		 * This overrides any --wsess, --num-conns, --num-calls,
+		 * --burst-length and any uri generator 
+		 */
+		printf(" --cwmp=%u,%.3f,%s", param.cwmp.num_sessions,
+		       param.cwmp.think_time, param.cwmp.file);
 	}
 	if (periodic_stats)
 		printf(" --periodic-stats");
