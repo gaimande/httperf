@@ -176,6 +176,7 @@ typedef struct Cmdline_Params
 	Time think_time;	/* user think time between calls */
         char *serial;           /* serial number of duts */
 	char *file;		/* name of the file where session defs are */
+        char *serial_prefix;    /* device serial number prefix */
       }
     cwmp;
   }

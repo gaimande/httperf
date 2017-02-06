@@ -947,24 +947,31 @@ main(int argc, char **argv)
 				name = "bad session filename (3rd param)";
 				if (*end != ',')
 					goto bad_cwmp_param;
-				optarg = end + 1;
+				optarg = end + 1;              
 
 				/*
 				 * simulate parsing of string 
 				 */
 				param.cwmp.file = optarg;
 				if ((end = strchr(optarg, ',')) == NULL)
-					/*
-					 * must be last param, position end at 
-					 * final \0 
-					 */
+                                        goto bad_cwmp_param;
+				else
+					*end++ = '\0';
+
+				optarg = end;
+
+                                name = "bad device serial prefix (4th param)";
+				if ('\0' == *end)
+					goto bad_cwmp_param;
+
+				param.cwmp.serial_prefix = optarg;
+
+                                if ((end = strchr(optarg, ',')) == NULL)
 					end = optarg + strlen(optarg);
 				else
-					/*
-					 * terminate end of string 
-					 */
 					*end++ = '\0';
-				optarg = end;
+
+                                optarg = end + 1;
 
 				name = "extraneous parameter";
 				if (*end) {
@@ -1337,8 +1344,8 @@ main(int argc, char **argv)
 		 * This overrides any --wsess, --num-conns, --num-calls,
 		 * --burst-length and any uri generator 
 		 */
-		printf(" --cwmp=%u,%.3f,%s", param.cwmp.num_sessions,
-		       param.cwmp.think_time, param.cwmp.file);
+		printf(" --cwmp=%u,%.3f,%s,%s", param.cwmp.num_sessions,
+		       param.cwmp.think_time, param.cwmp.file, param.cwmp.serial_prefix);
 	}
 	if (periodic_stats)
 		printf(" --periodic-stats");

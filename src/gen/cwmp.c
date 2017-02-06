@@ -104,6 +104,7 @@ struct Sess_Private_Data
 
     BURST *current_burst;	/* the current burst we're working on */
     REQ *current_req;		/* the current request we're working on */
+    int trans_seq;
     int current_cpe_action;
     char *cwmpID;
     char *serial;
@@ -125,16 +126,15 @@ enum
 {
     CPE_INFORM = 0,
     CPE_DONE,
-    CPE_REP_ALL_PARAM,
-    CPE_REP_ALL_VALUE,
+    CPE_REP_ALL_PARAM_NAME,
+    CPE_REP_ALL_PARAM_VALUE,
     CPE_MAX
 };
 
 static const char *cwmp_cpe_action_name[] =
   {
-    "INFORM", "DONE", "REP_ALL_PARAM", "REP_ALL_VALUE"
+    "INFORM", "DONE", "REP_ALL_PARAM_NAME", "REP_ALL_PARAM_VALUE"
   };
-
 
 static size_t sess_private_data_offset;
 static int num_sessions_generated;
@@ -171,106 +171,61 @@ cwmp_get_cwmpID (const char *msg, Sess_Private_Data *priv)
 }
 
 static int
-cwmp_build_inform_msg (const REQ *template, Sess_Private_Data *priv)
+cwmp_build_reply_msg (const REQ *template, Sess_Private_Data *priv)
 {
     int len = 0;
     int ret = 0;
+    int num_replace = 0;
+    char *str = template->contents;
+    const char* pattern_replace = "%s";
 
-    len = sizeof(char) * (strlen(template->contents) + 2 * strlen(priv->serial) - 3);    
+    while (NULL != (str = strstr(str, pattern_replace)))
+    {
+        num_replace++;
+        str += strlen(pattern_replace);
+    }
+
+    /* Use a random cwmpID for the first message */
+    if (NULL == priv->cwmpID)
+    {
+        priv->cwmpID = priv->serial;
+    }
 
     if (priv->current_req->contents != NULL)
     {
         free(priv->current_req->contents);
         priv->current_req->contents = NULL;
     }
-    
-    priv->current_req->contents = calloc(1, len);
-    if (NULL == priv->current_req->contents)
+
+    if (num_replace > 0)
     {
-        fprintf (stderr, "not enough memory to allocate\n");
-        return -1;
+        len = sizeof(char) * (template->contents_len + strlen(priv->cwmpID) +
+              (num_replace - 1) * strlen(priv->serial) - num_replace * strlen(pattern_replace));
+
+        priv->current_req->contents = calloc(1, len + 1);
+        if (NULL == priv->current_req->contents)
+        {
+            fprintf (stderr, "not enough memory to allocate\n");
+            return -1;
+        }
+        
+        ret = snprintf (priv->current_req->contents, len + 1, template->contents, 
+                        priv->cwmpID, priv->serial, priv->serial);
+        if (ret > len)
+        {
+            fprintf (stderr, "snprintf error\n");
+            return -1;
+        }
     }
-    
-    ret = snprintf (priv->current_req->contents, len, template->contents, priv->serial, priv->serial);
-    
-    if (ret >= len)
+    else
     {
-        fprintf (stderr, "snprintf error\n");
-        return -1;
-    }
-
-    priv->current_req->contents_len = len;
-    priv->current_req->method = template->method;
-    priv->current_req->uri = template->uri;
-    priv->current_req->uri_len = template->uri_len;
-    priv->current_req->cpe_action = template->cpe_action;
-    
-    return 0;
-}
-
-static int
-cwmp_build_reply_all_param_name (const REQ *template, Sess_Private_Data *priv)
-{
-    int len = 0;
-    int ret = 0;
-
-    len = sizeof(char) * (strlen(template->contents) + strlen(priv->cwmpID) - 1);
-
-    if (priv->current_req->contents != NULL)
-    {
-        free(priv->current_req->contents);
-        priv->current_req->contents = NULL;
-    }
-    
-    priv->current_req->contents = calloc(1, len);
-    if (NULL == priv->current_req->contents)
-    {
-        fprintf (stderr, "not enough memory to allocate\n");
-        return -1;
-    }
-
-    ret = snprintf (priv->current_req->contents, len, template->contents, priv->cwmpID);
-    if (ret >= len)
-    {
-        fprintf (stderr, "snprintf error\n");
-        return -1;
-    }
-
-    priv->current_req->contents_len = len;
-    priv->current_req->method = template->method;
-    priv->current_req->uri = template->uri;
-    priv->current_req->uri_len = template->uri_len;
-    priv->current_req->cpe_action = template->cpe_action;
-    
-    return 0;
-}
-
-static int
-cwmp_build_reply_all_param_value (const REQ *template, Sess_Private_Data *priv)
-{
-    int len = 0;
-    int ret = 0;
-
-    len = sizeof(char) * (strlen(template->contents) + strlen(priv->cwmpID) + strlen(priv->serial) - 3);
-
-    if (priv->current_req->contents != NULL)
-    {
-        free(priv->current_req->contents);
-        priv->current_req->contents = NULL;
-    }
-    
-    priv->current_req->contents = calloc(1, len);
-    if (NULL == priv->current_req->contents)
-    {
-        fprintf (stderr, "not enough memory to allocate\n");
-        return -1;
-    }
-    
-    ret = snprintf (priv->current_req->contents, len, template->contents, priv->cwmpID, priv->serial);
-    if (ret >= len)
-    {
-        fprintf (stderr, "snprintf error\n");
-        return -1;
+        len = template->contents_len;
+        priv->current_req->contents = strndup (template->contents, len);
+        if (NULL == priv->current_req->contents)
+        {
+            fprintf (stderr, "not enough memory to allocate\n");
+            return -1;
+        }
     }
 
     priv->current_req->contents_len = len;
@@ -290,7 +245,7 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   Sess *sess;
 
   assert (et == EV_SESS_DESTROYED && object_is_sess (obj));
-  sess = (Sess *) obj;
+  sess = (Sess *) obj;  
 
   priv = SESS_PRIVATE_DATA (sess);
   if (priv->timer)
@@ -315,20 +270,31 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
     core_exit ();
 }
 
+static void
+sess_failed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
+{
+  Sess_Private_Data *priv;
+  Sess *sess;
+
+  assert (et == EV_SESS_FAILED&& object_is_sess (obj));
+  sess = (Sess *) obj;
+}
+
 REQ *
-cwmp_find_req_template (int cpe_action)
+cwmp_find_req_template (int trans_seq)
 {
     int i;
     REQ *req, *req_list_bk;
 
-    req = req_list_bk = session_templates.current_burst->req_list;
-    for (i = 0; i < session_templates.current_burst->num_reqs; i++)
-    {        
-        if (req->cpe_action == cpe_action)
-        {
-            return req;
-        }
+    if (trans_seq > session_templates.current_burst->num_reqs)
+    {
+        fprintf (stderr, "Invalid message sequence %d. Maxinum sequence is %d.\n", trans_seq, session_templates.current_burst->num_reqs);
+        return NULL;
+    }
 
+    req = req_list_bk = session_templates.current_burst->req_list;
+    for (i = 1; i < trans_seq; i++)
+    {        
         req = req->next;        
     }
 
@@ -355,43 +321,17 @@ issue_calls (Sess *sess, Sess_Private_Data *priv)
   {
     sess_failure (sess);
     return;
-  }
+  }  
 
   req = priv->current_req;
 
-  req_template = cwmp_find_req_template(sess->current_cpe_action);
+  req_template = cwmp_find_req_template(sess->trans_seq);
+
   if (req_template == NULL)
     panic ("%s: internal error, cannot find request template for %s\n",
-        prog_name, cwmp_cpe_action_name[sess->current_cpe_action]);
+        prog_name, cwmp_cpe_action_name[sess->current_cpe_action]); 
 
-  /* fill in the new call: */  
-  if (CPE_INFORM == sess->current_cpe_action)
-  {            
-      cwmp_build_inform_msg (req_template, priv);
-  }
-  else if (CPE_DONE == sess->current_cpe_action)
-  {
-      if (req->contents != NULL)
-      {
-          free(req->contents);
-          req->contents = NULL;
-      }
-      
-      req->contents_len = 0;
-      req->contents = strdup("");
-  }
-  else if (CPE_REP_ALL_PARAM== sess->current_cpe_action)
-  {
-      cwmp_build_reply_all_param_name (req_template, priv);
-  }
-  else if (CPE_REP_ALL_VALUE== sess->current_cpe_action)
-  {
-      cwmp_build_reply_all_param_value (req_template, priv);
-  }
-  else
-  {
-      return;
-  }
+  cwmp_build_reply_msg (req_template, priv);
   
   snprintf (req->extra_hdrs, sizeof(req->extra_hdrs), "Content-length: %d\r\n", req->contents_len);
   req->extra_hdrs_len = strlen (req->extra_hdrs);
@@ -406,15 +346,14 @@ issue_calls (Sess *sess, Sess_Private_Data *priv)
   call_set_contents (call, req->contents, req->contents_len);
  
   if (DBG > 0)
-  fprintf (stderr, "%s: accessing URI `%s'\n", prog_name, req->uri);
+      fprintf (stderr, "%s: accessing URI `%s'\n", prog_name, req->uri);
   
   retval = session_issue_call (sess, call);
   
   call_dec_ref (call);
   
   if (retval < 0)
-  return;
-      
+      return;
 }
 
 static void
@@ -433,23 +372,71 @@ call_recv_data (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   
   line = callarg.vp;    
   cp = line->iov_base;
-  
-  if (NULL != strstr(cp, "InformResponse"))
+
+  if (NULL != strstr(cp, "<cwmp:InformResponse>"))
   {
+        sess->trans_seq++;
+        
+        if (sess->current_cpe_action > CPE_DONE)
+        {
+            fprintf (stderr, "Session workflow for CPE %s is wrong. Kill it.\n", priv->serial);
+            priv->num_calls_destroyed = priv->total_num_reqs;
+            return;
+        }
         sess->current_cpe_action = CPE_DONE;
   }
-  else if (NULL != strstr(cp, "</cwmp:GetParameterNames>"))
+  else if (NULL != strstr(cp, "<cwmp:GetParameterNames>"))
   {
+        sess->trans_seq++;
         cwmp_get_cwmpID (cp, priv);
-        sess->current_cpe_action = CPE_REP_ALL_PARAM;
+        if (sess->current_cpe_action > CPE_REP_ALL_PARAM_NAME)
+        {
+            fprintf (stderr, "Session workflow for CPE %s is wrong. Kill it.\n", priv->serial);
+            priv->num_calls_destroyed = priv->total_num_reqs;
+            return;
+        }
+
+        sess->current_cpe_action = CPE_REP_ALL_PARAM_NAME;
   }
-  else if (NULL != strstr(cp, "</cwmp:GetParameterValues>"))
+  else if (NULL != strstr(cp, "<cwmp:GetParameterValues>"))
   {
-        sess->current_cpe_action = CPE_REP_ALL_VALUE;
-  }
-  else
+        sess->trans_seq++;
+        sess->current_cpe_action = CPE_REP_ALL_PARAM_VALUE;
+  }  
+}
+
+static void
+call_recv_start (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
+{
+  Sess_Private_Data *priv;
+  Sess *sess;
+  Call *call;
+  char *buf = NULL;
+  u_int status;
+  static int success, failed;
+  
+  assert (et == EV_CALL_RECV_START && object_is_call (obj));
+  call = (Call *) obj;
+  sess = session_get_sess_from_call (call);
+  priv = SESS_PRIVATE_DATA (sess);  
+
+  buf = call->conn->line.iov_base;
+  if (sscanf (buf, "HTTP/%*u.%*u %u ", &status) == 1)
   {
-        sess->current_cpe_action = CPE_INFORM;
+    if ((status / 100) > 3)
+    {
+        /* clients or server errors */
+        /* Workflow is wrong. Close this session */
+        priv->num_calls_destroyed = priv->total_num_reqs;
+    }
+    else if (204 == status) /* No Content */
+    {
+        if (sess->trans_seq != session_templates.current_burst->num_reqs)
+        {
+            /* Workflow is wrong. Close this session */
+            priv->num_calls_destroyed = priv->total_num_reqs;
+        }
+    }
   }
 }
 
@@ -492,7 +479,8 @@ sess_create (Any_Type arg)
   }
   memset (priv->current_req, 0x0, sizeof(REQ));
 
-  snprintf (serial, sizeof(serial), CWMP_SERIAL_STR, "QQQ", num_sessions_generated);
+  snprintf (serial, sizeof(serial), CWMP_SERIAL_STR,
+            param.cwmp.serial_prefix, num_sessions_generated);
 
   priv->serial = strdup(serial);
   if (NULL == priv->serial)
@@ -501,7 +489,7 @@ sess_create (Any_Type arg)
         return -1;
   }
   
-  sess->current_cpe_action = CPE_INFORM;
+  sess->trans_seq = 1;
   
   if (DBG > 0)
     fprintf (stderr, "Starting session, first burst_len = %d\n",
@@ -610,7 +598,6 @@ parse_config (void)
   char line[500000];	/* some uri's get pretty long */
   char uri[500000];	/* some uri's get pretty long */
   char method_str[1000];
-  char cpe_action_str[1000];
   char this_arg[500000]; 
   char contents[500000];
   double think_time;
@@ -679,21 +666,6 @@ parse_config (void)
 	      if (i == HM_LEN)
 		panic ("%s: did not recognize method '%s' in %s\n",
 		       prog_name, method_str, param.cwmp.file);  
-	    }
-          else if (sscanf (this_arg, "cwmp=%s", cpe_action_str) == 1)
-	    {
-	      for (i = 0; i < CPE_MAX; i++)
-		{
-		  if (!strncmp (cpe_action_str,cwmp_cpe_action_name[i],
-				strlen (cwmp_cpe_action_name[i])))
-		    {
-		      sptr->current_req->cpe_action = i;
-		      break;
-		    }
-		}
-	      if (i == CPE_MAX)
-		panic ("%s: did not recognize cpe action '%s' in %s\n",
-		       prog_name, cpe_action_str, param.cwmp.file);  
 	    }
 	  else if (sscanf (this_arg, "think=%lf", &think_time) == 1)
 	    current_burst->user_think_time = think_time;
@@ -818,6 +790,8 @@ init (void)
   event_register_handler (EV_SESS_DESTROYED, sess_destroyed, arg);
   event_register_handler (EV_CALL_DESTROYED, call_destroyed, arg);
   event_register_handler (EV_CALL_RECV_DATA, call_recv_data, arg);
+  event_register_handler (EV_CALL_RECV_START, call_recv_start, arg);
+  event_register_handler (EV_SESS_FAILED, sess_failed, arg);
 
   /* This must come last so the session event handlers are executed
      before this module's handlers.  */
