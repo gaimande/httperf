@@ -51,6 +51,7 @@
 #include <localevent.h>
 #include <rate.h>
 #include <session.h>
+#include <cwmp.h>
 
 /* Maximum number of sessions that can be defined in the configuration
    file.  */
@@ -63,52 +64,8 @@
 #define FALSE (0)
 #endif
 
-#define SESS_PRIVATE_DATA(c)						\
-  ((Sess_Private_Data *) ((char *)(c) + sess_private_data_offset))
-
 #define CWMP_SERIAL_MAX_LEN     32
 #define CWMP_SERIAL_STR         "%s%05d"
-
-typedef struct req REQ;
-struct req
-  {
-    REQ *next;
-    int method;
-    char *uri;
-    int uri_len;
-    char *contents;
-    int contents_len;
-    char extra_hdrs[50];	/* plenty for "Content-length: 1234567890" */
-    int extra_hdrs_len;
-    int cpe_action;
-  };
-
-typedef struct burst BURST;
-struct burst
-  {
-    BURST *next;
-    int num_reqs;
-    Time user_think_time;
-    REQ *req_list;
-  };
-
-typedef struct Sess_Private_Data Sess_Private_Data;
-struct Sess_Private_Data
-  {
-    u_int num_calls_in_this_burst; /* # of calls created for this burst */
-    u_int num_calls_target;	/* total # of calls desired */
-    u_int num_calls_destroyed;	/* # of calls destroyed so far */
-    struct Timer *timer;		/* timer for session think time */
-
-    int total_num_reqs;		/* total number of requests in this session */
-
-    BURST *current_burst;	/* the current burst we're working on */
-    REQ *current_req;		/* the current request we're working on */
-    int trans_seq;
-    int current_cpe_action;
-    char *cwmpID;
-    char *serial;
-  };
 
 /* Methods allowed for a request: */
 enum
@@ -122,21 +79,7 @@ static const char *call_method_name[] =
     "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT", "TRACE"
   };
 
-enum
-{
-    CPE_INFORM = 0,
-    CPE_DONE,
-    CPE_REP_ALL_PARAM_NAME,
-    CPE_REP_ALL_PARAM_VALUE,
-    CPE_MAX
-};
-
-static const char *cwmp_cpe_action_name[] =
-  {
-    "INFORM", "DONE", "REP_ALL_PARAM_NAME", "REP_ALL_PARAM_VALUE"
-  };
-
-static size_t sess_private_data_offset;
+size_t cwmp_sess_private_data_offset;
 static int num_sessions_generated;
 static int num_sessions_destroyed;
 static Rate_Generator rg_cwmp;
@@ -144,10 +87,10 @@ static Rate_Generator rg_cwmp;
 /* This is an array rather than a list because we may want different
    httperf clients to start at different places in the sequence of
    sessions. */
-static Sess_Private_Data session_templates;
+static Cwmp_Sess_Private_Data session_templates;
 
 static int
-cwmp_get_cwmpID (const char *msg, Sess_Private_Data *priv)
+cwmp_get_cwmpID (const char *msg, Cwmp_Sess_Private_Data *priv)
 {
     const char *cwmp_node = "<cwmp:ID soap-env:mustUnderstand=\"1\">";
     char *ptr_s, *ptr_e;
@@ -171,7 +114,7 @@ cwmp_get_cwmpID (const char *msg, Sess_Private_Data *priv)
 }
 
 static int
-cwmp_build_reply_msg (const REQ *template, Sess_Private_Data *priv)
+cwmp_build_reply_msg (const REQ *template, Cwmp_Sess_Private_Data *priv)
 {
     int len = 0;
     int ret = 0;
@@ -241,13 +184,13 @@ cwmp_build_reply_msg (const REQ *template, Sess_Private_Data *priv)
 static void
 sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 {
-  Sess_Private_Data *priv;
+  Cwmp_Sess_Private_Data *priv;
   Sess *sess;
 
   assert (et == EV_SESS_DESTROYED && object_is_sess (obj));
   sess = (Sess *) obj;  
 
-  priv = SESS_PRIVATE_DATA (sess);
+  priv = CWMP_SESS_PRIVATE_DATA (sess);
   if (priv->timer)
     {
       timer_cancel (priv->timer);
@@ -273,10 +216,10 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 static void
 sess_failed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 {
-  Sess_Private_Data *priv;
+  Cwmp_Sess_Private_Data *priv;
   Sess *sess;
 
-  assert (et == EV_SESS_FAILED&& object_is_sess (obj));
+  assert (et == EV_SESS_FAILED && object_is_sess (obj));
   sess = (Sess *) obj;
 }
 
@@ -303,7 +246,7 @@ cwmp_find_req_template (int trans_seq)
 }
 
 static void
-issue_calls (Sess *sess, Sess_Private_Data *priv)
+issue_calls (Sess *sess, Cwmp_Sess_Private_Data *priv)
 {
   int i, retval, n, length;
   const char *method_str;
@@ -325,11 +268,11 @@ issue_calls (Sess *sess, Sess_Private_Data *priv)
 
   req = priv->current_req;
 
-  req_template = cwmp_find_req_template(sess->trans_seq);
+  req_template = cwmp_find_req_template(priv->trans_seq);
 
   if (req_template == NULL)
     panic ("%s: internal error, cannot find request template for %s\n",
-        prog_name, cwmp_cpe_action_name[sess->current_cpe_action]); 
+        prog_name, cwmp_cpe_action_name[priv->current_cpe_action]); 
 
   cwmp_build_reply_msg (req_template, priv);
   
@@ -359,7 +302,7 @@ issue_calls (Sess *sess, Sess_Private_Data *priv)
 static void
 call_recv_data (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 {
-  Sess_Private_Data *priv;
+  Cwmp_Sess_Private_Data *priv;
   const char *cp;
   struct iovec *line;
   Sess *sess;
@@ -368,47 +311,46 @@ call_recv_data (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   assert (et == EV_CALL_RECV_DATA && object_is_call (obj));
   call = (Call *) obj;
   sess = session_get_sess_from_call (call);
-  priv = SESS_PRIVATE_DATA (sess);
+  priv = CWMP_SESS_PRIVATE_DATA (sess);
   
   line = callarg.vp;    
   cp = line->iov_base;
 
   if (NULL != strstr(cp, "<cwmp:InformResponse>"))
   {
-        sess->trans_seq++;
+        priv->trans_seq++;
         
-        if (sess->current_cpe_action > CPE_DONE)
+        if (priv->current_cpe_action > CPE_INFORM_DONE)
         {
-            fprintf (stderr, "Session workflow for CPE %s is wrong. Kill it.\n", priv->serial);
             priv->num_calls_destroyed = priv->total_num_reqs;
             return;
         }
-        sess->current_cpe_action = CPE_DONE;
+        
+        priv->current_cpe_action = CPE_INFORM_DONE;
   }
   else if (NULL != strstr(cp, "<cwmp:GetParameterNames>"))
   {
-        sess->trans_seq++;
+        priv->trans_seq++;
         cwmp_get_cwmpID (cp, priv);
-        if (sess->current_cpe_action > CPE_REP_ALL_PARAM_NAME)
+        if (priv->current_cpe_action > CPE_REP_ALL_PARAM_NAME)
         {
-            fprintf (stderr, "Session workflow for CPE %s is wrong. Kill it.\n", priv->serial);
             priv->num_calls_destroyed = priv->total_num_reqs;
             return;
         }
 
-        sess->current_cpe_action = CPE_REP_ALL_PARAM_NAME;
+        priv->current_cpe_action = CPE_REP_ALL_PARAM_NAME;
   }
   else if (NULL != strstr(cp, "<cwmp:GetParameterValues>"))
   {
-        sess->trans_seq++;
-        sess->current_cpe_action = CPE_REP_ALL_PARAM_VALUE;
+        priv->trans_seq++;
+        priv->current_cpe_action = CPE_REP_ALL_PARAM_VALUE;
   }  
 }
 
 static void
 call_recv_start (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 {
-  Sess_Private_Data *priv;
+  Cwmp_Sess_Private_Data *priv;
   Sess *sess;
   Call *call;
   char *buf = NULL;
@@ -418,20 +360,25 @@ call_recv_start (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   assert (et == EV_CALL_RECV_START && object_is_call (obj));
   call = (Call *) obj;
   sess = session_get_sess_from_call (call);
-  priv = SESS_PRIVATE_DATA (sess);  
+  priv = CWMP_SESS_PRIVATE_DATA (sess);  
 
   buf = call->conn->line.iov_base;
+  priv->cwmp_failed = 1;
+  
   if (sscanf (buf, "HTTP/%*u.%*u %u ", &status) == 1)
   {
     if ((status / 100) > 3)
     {
-        /* clients or server errors */
         /* Workflow is wrong. Close this session */
         priv->num_calls_destroyed = priv->total_num_reqs;
     }
     else if (204 == status) /* No Content */
     {
-        if (sess->trans_seq != session_templates.current_burst->num_reqs)
+        if (priv->trans_seq == session_templates.current_burst->num_reqs)
+        {
+            priv->cwmp_failed = 0;
+        }
+        else
         {
             /* Workflow is wrong. Close this session */
             priv->num_calls_destroyed = priv->total_num_reqs;
@@ -444,11 +391,11 @@ static void
 user_think_time_expired (struct Timer *t, Any_Type arg)
 {
   Sess *sess = arg.vp;
-  Sess_Private_Data *priv;
+  Cwmp_Sess_Private_Data *priv;
 
   assert (object_is_sess (sess));
 
-  priv = SESS_PRIVATE_DATA (sess);
+  priv = CWMP_SESS_PRIVATE_DATA (sess);
   priv->timer = 0;
   issue_calls (sess, priv);
 }
@@ -458,15 +405,15 @@ static int
 sess_create (Any_Type arg)
 {
   char serial[CWMP_SERIAL_MAX_LEN] = {0};
-  Sess_Private_Data *priv;
+  Cwmp_Sess_Private_Data *priv;
   Sess *sess;
 
   if (num_sessions_generated++ >= param.cwmp.num_sessions)
     return -1;
 
-  sess = sess_new ();
+  sess = sess_new ();  
 
-  priv = SESS_PRIVATE_DATA (sess);
+  priv = CWMP_SESS_PRIVATE_DATA (sess);
   priv->current_burst = session_templates.current_burst;
   priv->total_num_reqs = session_templates.total_num_reqs;
   priv->num_calls_target = session_templates.current_burst->num_reqs;
@@ -489,7 +436,7 @@ sess_create (Any_Type arg)
         return -1;
   }
   
-  sess->trans_seq = 1;
+  priv->trans_seq = 1;
   
   if (DBG > 0)
     fprintf (stderr, "Starting session, first burst_len = %d\n",
@@ -500,7 +447,7 @@ sess_create (Any_Type arg)
 }
 
 static void
-prepare_for_next_burst (Sess *sess, Sess_Private_Data *priv)
+prepare_for_next_burst (Sess *sess, Cwmp_Sess_Private_Data *priv)
 {
   Time think_time;
   Any_Type arg;
@@ -529,14 +476,14 @@ prepare_for_next_burst (Sess *sess, Sess_Private_Data *priv)
 static void
 call_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 {
-  Sess_Private_Data *priv;
+  Cwmp_Sess_Private_Data *priv;
   Sess *sess;
   Call *call;
 
   assert (et == EV_CALL_DESTROYED && object_is_call (obj));
   call = (Call *) obj;
   sess = session_get_sess_from_call (call);
-  priv = SESS_PRIVATE_DATA (sess);
+  priv = CWMP_SESS_PRIVATE_DATA (sess);
 
   if (sess->failed)
     return;
@@ -594,7 +541,7 @@ parse_config (void)
 {
   FILE *fp;
   int lineno, i, reqnum;
-  Sess_Private_Data *sptr;
+  Cwmp_Sess_Private_Data *sptr;
   char line[500000];	/* some uri's get pretty long */
   char uri[500000];	/* some uri's get pretty long */
   char method_str[1000];
@@ -780,8 +727,9 @@ init (void)
 
   parse_config ();
 
-  sess_private_data_offset = object_expand (OBJ_SESS,
-					    sizeof (Sess_Private_Data));
+  cwmp_sess_private_data_offset = object_expand (OBJ_SESS,
+					    sizeof (Cwmp_Sess_Private_Data));
+
   rg_cwmp.rate = &param.rate;
   rg_cwmp.tick = sess_create;
   rg_cwmp.arg.l = 0;

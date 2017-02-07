@@ -237,6 +237,7 @@ main(int argc, char **argv)
 	extern Load_Generator wsess, wsesslog, wsesspage, sess_cookie, misc, cwmp;
 	extern Stat_Collector stats_basic, session_stat;
 	extern Stat_Collector stats_print_reply;
+        extern Stat_Collector cwmp_stat;
 	extern char    *optarg;
 	int             session_workload = 0;
 	int             num_gen = 3;
@@ -923,7 +924,7 @@ main(int argc, char **argv)
 				num_gen = 1;	/* XXX fix me---somehow */
 				gen[0] = &cwmp;
 
-				stat[num_stats++] = &session_stat;
+				stat[num_stats++] = &cwmp_stat;
 
 				errno = 0;
 				name = "bad number of sessions (1st param)";

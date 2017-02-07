@@ -2,4 +2,4 @@
 AM_CFLAGS = -I$(srcdir)/.. -I$(srcdir)/../gen -I$(srcdir)/../lib
 
 noinst_LIBRARIES = libstat.a
-libstat_a_SOURCES = basic.c sess_stat.c print_reply.c stats.h
+libstat_a_SOURCES = basic.c sess_stat.c print_reply.c cwmp_stat.c stats.h

@@ -48,8 +48,6 @@ typedef struct Sess
     SSL *ssl;		/* SSL session (or NULL) */
 #endif /* HAVE_SSL */
     u_int failed : 1;	/* did session fail? */
-    int trans_seq;
-    int current_cpe_action;
   }
 Sess;
 
