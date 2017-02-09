@@ -63,6 +63,7 @@ static struct
     u_int num_failed;
 
     u_int num_inform_completed;
+    size_t req_bytes_sent;
   }
 st;
 
@@ -177,6 +178,7 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   cwmp_priv = CWMP_SESS_PRIVATE_DATA (sess);
 
   delta = (now - stat_priv->birth_time);
+  
   if (sess->failed || cwmp_priv->cwmp_failed)
   {
     ++st.num_failed;
@@ -185,6 +187,10 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   {
     ++st.num_succeeded;
     st.lifetime_sum += delta;
+
+    char str[1024] = {0};
+    sprintf (str, "echo %s >> abc", cwmp_priv->serial);
+    system (str);
   }
   
   process_bar_print();
@@ -213,6 +219,16 @@ call_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 }
 
 static void
+send_stop(Event_Type et, Object * obj, Any_Type reg_arg, Any_Type call_arg)
+{
+  Call *c = (Call *) obj;
+
+  assert(et == EV_CALL_SEND_STOP && object_is_call(c));
+
+  st.req_bytes_sent += c->req.size;
+}
+
+static void
 init (void)
 {
   Any_Type arg;
@@ -225,6 +241,7 @@ init (void)
   event_register_handler (EV_SESS_NEW, sess_created, arg);
   event_register_handler (EV_SESS_DESTROYED, sess_destroyed, arg);
   event_register_handler (EV_CALL_DESTROYED, call_destroyed, arg);
+  event_register_handler (EV_CALL_SEND_STOP, send_stop, arg);
 }
 
 static void
@@ -232,10 +249,17 @@ dump (void)
 {
   double min, avg, stddev, delta, rate_succeeded;
   int i;
+  time_t start_t = (time_t)test_time_start;
+  time_t stop_t = (time_t)test_time_stop;
+  char start_s[20], stop_s[20];
 
   delta = test_time_stop - test_time_start;
 
   putchar ('\n');
+
+  strftime(start_s, sizeof(start_s), "%Y-%m-%d %H:%M:%S", localtime(&start_t));
+  strftime(stop_s, sizeof(stop_s), "%Y-%m-%d %H:%M:%S", localtime(&stop_t));
+  printf ("Cwmp testing plan: begin %s end %s\n", start_s, stop_s);
 
   avg = 0.0;
   if (st.num_succeeded > 0)
@@ -243,16 +267,20 @@ dump (void)
   printf ("Cwmp session lifetime [s]: %.1f\n", avg);
 
   rate_succeeded = st.num_succeeded * 100 / param.cwmp.num_sessions;
-  printf ("Cwmp session succeeded total: %d (%.1f%)\n", st.num_succeeded, rate_succeeded);
-  printf ("Cwmp session failed total: %d (%.1f%)\n", st.num_failed, 100 - rate_succeeded);
+  printf ("Cwmp session succeeded [sess]: total %d (%.1f%)\n",
+          st.num_succeeded, rate_succeeded);
+  printf ("Cwmp session failed [sess]: total %d (%.1f%)\n",
+          st.num_failed, 100 - rate_succeeded);
+  printf ("Cwmp size sent rate [B/sess]: %d (total %d)\n",
+          st.req_bytes_sent / param.cwmp.num_sessions, st.req_bytes_sent);
 }
 
 Stat_Collector cwmp_stat =
-  {
+{
     "collects cwmp-related statistics",
     init,
     no_op,
     no_op,
     dump
-  };
+};
 

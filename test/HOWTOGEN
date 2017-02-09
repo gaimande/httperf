@@ -1,0 +1,14 @@
+To generate the TR-069 template for testing, please following these instructions:
+	1. Capturing desired TR-069 session from CPE side using tcpdump.
+		tcpdump -s 0 -i eth0 port 7547 src 192.168.1.100 -w tr69.pcap
+	2. Using Wireshark to extract the HTTP packets from the above pcap file.
+		File > Export Objects > HTTP
+	3. Each HTTP packets will be exported to a file, named with right order.
+	   We have to merge them to one file.
+		ls -vQ http* | xargs cat > tr69.http
+	4. Use the tr69gen application to build the cwmp template file, named output.
+		tr69gen tr69.http
+	5. Remove the leading space characters in the first line.
+	6. Adding this line in the second line of the output file.
+		/ method=POST contents=""
+	7. That's all.
