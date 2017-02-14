@@ -56,7 +56,7 @@ AC_CHECK_HEADERS([openssl/ssl.h getopt.h])
 if test "$ac_cv_header_openssl_ssl_h" = "yes" \
 	-a "$ac_cv_lib_ssl_SSL_version" = "yes" \
 	-a "$ac_cv_lib_crypto_main" = "yes"; then
-  CFLAGS="${CFLAGS} -DHAVE_SSL"
+  CFLAGS="${CFLAGS} -DHAVE_SSL -DHAVE_POLL"
   LDFLAGS="${LDFLAGS}"  
 fi
 

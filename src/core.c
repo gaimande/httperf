@@ -33,6 +33,7 @@
 #ifdef __FreeBSD__
 #define	HAVE_KEVENT
 #endif
+#define HAVE_POLL
 
 #include <assert.h>
 #include <ctype.h>
@@ -62,6 +63,10 @@
 #define	NOTE_MSECONDS		0
 #endif
 #endif
+
+#ifdef HAVE_POLL
+#include <poll.h>
+#endif /* HAVE_POLL */
 
 #ifdef __FreeBSD__
 #include <ifaddrs.h>
@@ -111,6 +116,12 @@ static fd_set   rdfds, wrfds;
 static int      min_sd = 0x7fffffff, max_sd = 0, alloced_sd_to_conn = 0;
 static struct timeval select_timeout;
 #endif
+
+#ifdef HAVE_POLL
+static struct pollfd pfds[5000];
+static int poll_timeout = 3000;
+#endif /* HAVE_POLL */
+
 static struct sockaddr_in myaddr;
 static struct address_pool myaddrs;
 #ifndef HAVE_KEVENT
@@ -373,6 +384,15 @@ clear_active(Conn * s, enum IO_DIR dir)
 		    "write" : "read");
 		exit(1);
 	}
+#elif defined HAVE_POLL
+        if (dir == WRITE)
+        {
+                pfds[sd].events &= ~POLLOUT;
+        }
+        else
+        {
+                pfds[sd].events &= ~POLLIN;
+        }
 #else
 	fd_set *	fdset;
 	
@@ -408,15 +428,30 @@ set_active(Conn * s, enum IO_DIR dir)
 	fd_set *	fdset;
 	
 	if (dir == WRITE)
+	{
 		fdset = &wrfds;
+#ifdef HAVE_POLL
+                pfds[sd].events |= POLLOUT;
+#endif /* HAVE_POLL */
+	}
 	else
+	{
 		fdset = &rdfds;
+#ifdef HAVE_POLL
+                pfds[sd].events |= POLLIN;
+#endif /* HAVE_POLL */
+	}
 	FD_SET(sd, fdset);
 	if (sd < min_sd)
 		min_sd = sd;
 #endif
 	if (sd >= max_sd)
+	{
 		max_sd = sd;
+#ifdef HAVE_POLL
+                pfds[sd].fd = sd;
+#endif /* HAVE_POLL */
+	}
 	if (dir == WRITE)
 		s->writing = 1;
 	else
@@ -1371,8 +1406,13 @@ core_close(Conn * conn)
 		close(sd);
 #ifndef HAVE_KEVENT
 		sd_to_conn[sd] = 0;
+#ifdef HAVE_POLL
+                pfds[sd].events &= ~POLLOUT;
+                pfds[sd].events &= ~POLLIN;
+#else
 		FD_CLR(sd, &wrfds);
 		FD_CLR(sd, &rdfds);
+#endif /* HAVE_POLL */                
 #endif
 		conn->reading = 0;
 		conn->writing = 0;
@@ -1443,6 +1483,102 @@ core_loop(void)
 			break;
 		}
 	}
+}
+#elif defined HAVE_POLL
+void
+core_loop (void)
+{
+    int is_readable, is_writable, n, sd;
+    Conn      *conn;
+    Any_Type   arg;
+    
+    while (running)
+    {
+        timer_tick();        
+
+        SYSCALL(POLL, n = poll (pfds, max_sd + 1, poll_timeout));
+
+        ++iteration;
+
+        if (n <= 0)
+        {
+            if (n < 0)
+            {
+                fprintf(stderr, "%s.core_loop: select failed: %s, max_sd %d, FD_SETSIZE %d\n", prog_name, strerror(errno), max_sd, FD_SETSIZE);
+                exit(1);
+            }
+            continue;
+        }
+        
+        for (sd = min_sd; sd <= max_sd; sd++)
+        {
+            if (0 == pfds[sd].revents)
+            {
+                continue;
+            }
+
+            is_readable = is_writable = 0;
+            
+            if (pfds[sd].revents & POLLIN)
+            {
+                is_readable = 1;
+            }
+   
+            if (pfds[sd].revents & POLLOUT)
+            {
+                is_writable = 1;
+            }
+    
+            if (is_readable || is_writable)
+            {
+                /*
+                 * only handle sockets that
+                 * haven't timed out yet
+                 */
+                conn = sd_to_conn[sd];
+                conn_inc_ref(conn);
+    
+                if (conn->watchdog)
+                {
+                    timer_cancel(conn->watchdog);
+                    conn->watchdog = 0;
+                }
+                if (conn->state == S_CONNECTING)
+                {
+    #ifdef HAVE_SSL
+                    if (param.use_ssl)
+                         core_ssl_connect(conn);
+                    else
+    #endif /* HAVE_SSL */
+                    if (is_writable)
+                    {
+    		    clear_active(conn, WRITE);
+                        conn->state = S_CONNECTED;
+                        arg.l = 0;
+                        event_signal(EV_CONN_CONNECTED, (Object*)conn, arg);
+                    }
+                }
+                else
+                {
+                    if (is_writable && conn->sendq)
+                        do_send(conn);
+                    if (is_readable && conn->recvq)
+                        do_recv(conn);
+                }
+                        
+                conn_dec_ref(conn);
+                        
+                if (--n > 0)
+                {
+                    timer_tick();
+                }
+                else
+                {
+                    break;
+                }
+            }                
+        }
+    }
 }
 #else
 void
