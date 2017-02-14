@@ -33,7 +33,6 @@
 #ifdef __FreeBSD__
 #define	HAVE_KEVENT
 #endif
-#define HAVE_POLL
 
 #include <assert.h>
 #include <ctype.h>
@@ -424,27 +423,27 @@ set_active(Conn * s, enum IO_DIR dir)
 		    "write" : "read");
 		exit(1);
 	}
+#elif defined HAVE_POLL
+        if (dir == WRITE)
+                pfds[sd].events |= POLLOUT;
+        else
+                pfds[sd].events |= POLLIN;
+
+        if (sd < min_sd)
+		min_sd = sd;
 #else
 	fd_set *	fdset;
 	
 	if (dir == WRITE)
-	{
 		fdset = &wrfds;
-#ifdef HAVE_POLL
-                pfds[sd].events |= POLLOUT;
-#endif /* HAVE_POLL */
-	}
 	else
-	{
 		fdset = &rdfds;
-#ifdef HAVE_POLL
-                pfds[sd].events |= POLLIN;
-#endif /* HAVE_POLL */
-	}
+
 	FD_SET(sd, fdset);
 	if (sd < min_sd)
 		min_sd = sd;
 #endif
+
 	if (sd >= max_sd)
 	{
 		max_sd = sd;
