@@ -56,7 +56,7 @@ AC_CHECK_HEADERS([openssl/ssl.h getopt.h])
 if test "$ac_cv_header_openssl_ssl_h" = "yes" \
 	-a "$ac_cv_lib_ssl_SSL_version" = "yes" \
 	-a "$ac_cv_lib_crypto_main" = "yes"; then
-  CFLAGS="${CFLAGS} -DHAVE_SSL -DHAVE_POLL"
+  CFLAGS="${CFLAGS} -DHAVE_SSL"
   LDFLAGS="${LDFLAGS}"  
 fi
 
@@ -91,6 +91,14 @@ AC_ARG_ENABLE(debug,
 
 if test "$enable_debug" = yes; then
       CFLAGS="${CFLAGS} -DDEBUG"
+fi
+
+# Enable poll() function to handle socket
+AC_ARG_ENABLE(poll,
+ [  --enable-poll          enable poll() to handle socket])
+
+if test "$enable_poll" = yes; then
+      CFLAGS="${CFLAGS} -DHAVE_POLL"
 fi
 
 AC_OUTPUT(Makefile man/Makefile src/stat/Makefile src/lib/Makefile src/gen/Makefile src/Makefile)

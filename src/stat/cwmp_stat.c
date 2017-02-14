@@ -53,6 +53,7 @@
 #include <localevent.h>
 #include <session.h>
 #include <stats.h>
+#include <time.h>
 #include <cwmp.h>
 
 static struct
@@ -187,10 +188,6 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   {
     ++st.num_succeeded;
     st.lifetime_sum += delta;
-
-    char str[1024] = {0};
-    sprintf (str, "echo %s >> abc", cwmp_priv->serial);
-    system (str);
   }
   
   process_bar_print();
@@ -267,11 +264,11 @@ dump (void)
   printf ("Cwmp session lifetime [s]: %.1f\n", avg);
 
   rate_succeeded = st.num_succeeded * 100 / param.cwmp.num_sessions;
-  printf ("Cwmp session succeeded [sess]: total %d (%.1f%)\n",
+  printf ("Cwmp session succeeded [sess]: total %d (%.1f%%)\n",
           st.num_succeeded, rate_succeeded);
-  printf ("Cwmp session failed [sess]: total %d (%.1f%)\n",
+  printf ("Cwmp session failed [sess]: total %d (%.1f%%)\n",
           st.num_failed, 100 - rate_succeeded);
-  printf ("Cwmp size sent rate [B/sess]: %d (total %d)\n",
+  printf ("Cwmp size sent rate [B/sess]: %zu (total %zu)\n",
           st.req_bytes_sent / param.cwmp.num_sessions, st.req_bytes_sent);
 }
 
