@@ -105,10 +105,10 @@ increase_bar (int value, int max, int bar_width)
 {
   int i;
   int cur_width = value * bar_width / max;
-        
+
   if (value > max)
   {
-     return;
+     value = max;
   }
 
   putchar ('[');
@@ -179,6 +179,7 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   cwmp_priv = CWMP_SESS_PRIVATE_DATA (sess);
 
   delta = (now - stat_priv->birth_time);
+
   
   if (sess->failed || cwmp_priv->cwmp_failed)
   {
@@ -194,14 +195,14 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 }
 
 static void
-call_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
+call_send_start (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 {
   Cwmp_Stat_Sess_Private_Data *stat_priv;
   Cwmp_Sess_Private_Data *cwmp_priv;
   Sess *sess;
   Call *call;  
 
-  assert (et == EV_CALL_DESTROYED && object_is_sess (obj));
+  assert (et == EV_CALL_SEND_START && object_is_sess (obj));
   call = (Call *) obj;
   sess = session_get_sess_from_call (call);
   stat_priv = CWMP_STAT_SESS_PRIVATE_DATA (sess);
@@ -237,7 +238,7 @@ init (void)
   arg.l = 0;
   event_register_handler (EV_SESS_NEW, sess_created, arg);
   event_register_handler (EV_SESS_DESTROYED, sess_destroyed, arg);
-  event_register_handler (EV_CALL_DESTROYED, call_destroyed, arg);
+  event_register_handler (EV_CALL_SEND_START, call_send_start, arg);
   event_register_handler (EV_CALL_SEND_STOP, send_stop, arg);
 }
 

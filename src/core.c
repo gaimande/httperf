@@ -117,7 +117,7 @@ static struct timeval select_timeout;
 #endif
 
 #ifdef HAVE_POLL
-static struct pollfd pfds[5000];
+static struct pollfd pfds[20000];
 static int poll_timeout = 3000;
 #endif /* HAVE_POLL */
 
