@@ -58,6 +58,13 @@
 
 static struct
   {
+    u_int num_rate_samples;
+    u_int num_succeeded_since_last_sample;
+    Time rate_sum;
+    Time rate_sum2;
+    Time rate_min;
+    Time rate_max;
+    
     u_int num_succeeded;
     Time lifetime_sum;
 
@@ -98,6 +105,29 @@ get_screen_width (void)
   }
   
   return w.ws_col;
+}
+
+static void
+perf_sample (Event_Type et, Object *obj, Any_Type reg_arg, Any_Type call_arg)
+{
+  Time weight = call_arg.d;
+  double rate;
+
+  assert (et == EV_PERF_SAMPLE);
+
+  rate = weight*st.num_succeeded_since_last_sample;
+  st.num_succeeded_since_last_sample = 0;
+
+  if (verbose)
+    printf ("session-rate = %-8.1f\n", rate);
+
+  ++st.num_rate_samples;
+  st.rate_sum += rate;
+  st.rate_sum2 += SQUARE (rate);
+  if (rate < st.rate_min)
+    st.rate_min = rate;
+  if (rate > st.rate_max)
+    st.rate_max = rate;
 }
 
 static void
@@ -187,6 +217,7 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   }
   else
   {
+    ++st.num_succeeded_since_last_sample;
     ++st.num_succeeded;
     st.lifetime_sum += delta;
   }
@@ -234,8 +265,11 @@ init (void)
 
   cwmp_stat_sess_private_data_offset = object_expand (OBJ_SESS,
 					    sizeof (Cwmp_Stat_Sess_Private_Data));
+
+  st.rate_min = DBL_MAX;
   
   arg.l = 0;
+  event_register_handler (EV_PERF_SAMPLE, perf_sample, arg);
   event_register_handler (EV_SESS_NEW, sess_created, arg);
   event_register_handler (EV_SESS_DESTROYED, sess_destroyed, arg);
   event_register_handler (EV_CALL_SEND_START, call_send_start, arg);
@@ -258,6 +292,22 @@ dump (void)
   strftime(start_s, sizeof(start_s), "%Y-%m-%d %H:%M:%S", localtime(&start_t));
   strftime(stop_s, sizeof(stop_s), "%Y-%m-%d %H:%M:%S", localtime(&stop_t));
   printf ("Cwmp testing plan: begin %s end %s\n", start_s, stop_s);
+
+  avg = 0;
+  stddev = 0;
+  if (delta > 0)
+    avg = st.num_succeeded/ delta;
+  if (st.num_rate_samples > 1)
+    stddev = STDDEV (st.rate_sum, st.rate_sum2, st.num_rate_samples);
+
+  if (st.num_rate_samples > 0)
+    min = st.rate_min;
+  else
+    min = 0.0;
+  
+  printf ("Cwmp session rate [sess/s]: min %.2f avg %.2f max %.2f "
+	  "stddev %.2f (%u/%u)\n", min, avg, st.rate_max, stddev,
+	  st.num_succeeded, st.num_succeeded + st.num_failed);
 
   avg = 0.0;
   if (st.num_succeeded > 0)
