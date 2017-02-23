@@ -29,6 +29,15 @@ struct burst
     REQ *req_list;
   };
 
+typedef enum cwmp_ret_e
+{
+    CWMP_ERR_NONE = 0,          /* No error */
+    CWMP_ERR_WORKFLOW,          /* Cwmp session workflow is abnormal */
+    CWMP_ERR_BAD_REQ,           /* ACS consider CPE's request is bad */
+    CWMP_ERR_NO_RESP,           /* ACS does not respond */
+    CWMP_ERR_OTHERS             /* Unknown error */
+} cwmp_ret_t;
+
 typedef struct Cwmp_Sess_Private_Data
   {
     u_int num_calls_in_this_burst; /* # of calls created for this burst */
@@ -36,7 +45,7 @@ typedef struct Cwmp_Sess_Private_Data
     u_int num_calls_destroyed;	/* # of calls destroyed so far */
     struct Timer *timer;		/* timer for session think time */
 
-    u_int cwmp_failed : 1;      /* did session fail? */
+    cwmp_ret_t cwmp_result;     /* did session fail? */
 
     int total_num_reqs;		/* total number of requests in this session */
 

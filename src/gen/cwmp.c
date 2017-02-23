@@ -221,6 +221,9 @@ sess_failed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 
   assert (et == EV_SESS_FAILED && object_is_sess (obj));
   sess = (Sess *) obj;
+
+  priv = CWMP_SESS_PRIVATE_DATA (sess);
+  priv->cwmp_result = CWMP_ERR_NO_RESP;
 }
 
 REQ *
@@ -363,26 +366,33 @@ call_recv_start (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   priv = CWMP_SESS_PRIVATE_DATA (sess);  
 
   buf = call->conn->line.iov_base;
-  priv->cwmp_failed = 1;
   
   if (sscanf (buf, "HTTP/%*u.%*u %u ", &status) == 1)
   {
     if ((status / 100) > 3)
     {
-        /* Workflow is wrong. Close this session */
+        priv->cwmp_result = CWMP_ERR_BAD_REQ;
+
+        /* Close this session */
         priv->num_calls_destroyed = priv->total_num_reqs;
     }
     else if (204 == status) /* No Content */
     {
         if (priv->trans_seq == session_templates.current_burst->num_reqs)
         {
-            priv->cwmp_failed = 0;
+            priv->cwmp_result = CWMP_ERR_NONE;
         }
         else
         {
-            /* Workflow is wrong. Close this session */
+            priv->cwmp_result = CWMP_ERR_WORKFLOW;
+            
+            /* Close this session */
             priv->num_calls_destroyed = priv->total_num_reqs;
         }
+    }
+    else
+    {
+        priv->cwmp_result = CWMP_ERR_OTHERS;
     }
   }
 }

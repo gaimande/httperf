@@ -64,11 +64,15 @@ static struct
     Time rate_sum2;
     Time rate_min;
     Time rate_max;
-    
+
+    u_int num_completed;
     u_int num_succeeded;
     Time lifetime_sum;
 
-    u_int num_failed;
+    u_int num_err_workflow;
+    u_int num_err_bad_req;
+    u_int num_err_no_resq;
+    u_int num_err_others;
 
     u_int num_inform_completed;
     size_t req_bytes_sent;
@@ -85,8 +89,6 @@ st;
 
 typedef struct Cwmp_Stat_Sess_Private_Data
   {
-    u_int num_cwmp_completed;	/* how many calls completed? */
-    u_int num_cwmp_failed;	/* how many calls failed? */
     Time birth_time;		/* when this session got created */
   }
 Cwmp_Stat_Sess_Private_Data;
@@ -133,13 +135,14 @@ perf_sample (Event_Type et, Object *obj, Any_Type reg_arg, Any_Type call_arg)
 static void
 increase_bar (int value, int max, int bar_width)
 {
-  int i;
-  int cur_width = value * bar_width / max;
+  int i, cur_width;
 
   if (value > max)
   {
      value = max;
   }
+
+  cur_width = value * bar_width / max;
 
   putchar ('[');
 
@@ -163,7 +166,7 @@ process_bar_print (void)
   int screen_width = get_screen_width();
   int colum_width = screen_width / 2;
   int bar_width = colum_width  - BAR_BORDER_WIDTH - PERCENT_FORMAT_LENGTH - WHITESPACE_LENGTH;  
-  int num_completed = st.num_succeeded + st.num_failed;
+  int num_finished = st.num_succeeded+ st.num_err_workflow + st.num_err_bad_req + st.num_err_no_resq + st.num_err_others;
 
   if (0 == first_time)
   {
@@ -172,11 +175,12 @@ process_bar_print (void)
   }
   
   putchar ('\r');
+
   increase_bar (st.num_inform_completed, param.cwmp.num_sessions, bar_width);
-  increase_bar (num_completed, param.cwmp.num_sessions, bar_width);
+  increase_bar (num_finished, param.cwmp.num_sessions, bar_width);
   fflush (stdout);
 
-  if (param.cwmp.num_sessions == num_completed)
+  if (param.cwmp.num_sessions == num_finished)
   {
      printf ("\n\n");
   }
@@ -210,16 +214,38 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 
   delta = (now - stat_priv->birth_time);
 
-  
-  if (sess->failed || cwmp_priv->cwmp_failed)
+  switch (cwmp_priv->cwmp_result)
   {
-    ++st.num_failed;
+    case CWMP_ERR_WORKFLOW:
+      ++st.num_err_workflow;
+      break;
+      
+    case CWMP_ERR_BAD_REQ:
+      ++st.num_err_bad_req;
+      break;
+
+    case CWMP_ERR_NO_RESP:
+      ++st.num_err_no_resq;
+      break;
+      
+    case CWMP_ERR_OTHERS:
+      ++st.num_err_others;
+      break;
+      
+    default:
+      break;
   }
-  else
+  
+  if (0 == sess->failed)
   {
     ++st.num_succeeded_since_last_sample;
-    ++st.num_succeeded;
+    ++st.num_completed;
     st.lifetime_sum += delta;
+
+    if (CWMP_ERR_NONE == cwmp_priv->cwmp_result)
+    {
+      ++st.num_succeeded;
+    }
   }
   
   process_bar_print();
@@ -279,7 +305,7 @@ init (void)
 static void
 dump (void)
 {
-  double min, avg, stddev, delta, rate_succeeded;
+  double min, avg, stddev, delta;
   int i;
   time_t start_t = (time_t)test_time_start;
   time_t stop_t = (time_t)test_time_stop;
@@ -291,12 +317,12 @@ dump (void)
 
   strftime(start_s, sizeof(start_s), "%Y-%m-%d %H:%M:%S", localtime(&start_t));
   strftime(stop_s, sizeof(stop_s), "%Y-%m-%d %H:%M:%S", localtime(&stop_t));
-  printf ("Cwmp testing plan: begin %s end %s\n", start_s, stop_s);
+  printf ("Cwmp testing time: begin %s end %s\n", start_s, stop_s);
 
   avg = 0;
   stddev = 0;
   if (delta > 0)
-    avg = st.num_succeeded/ delta;
+    avg = st.num_completed/ delta;
   if (st.num_rate_samples > 1)
     stddev = STDDEV (st.rate_sum, st.rate_sum2, st.num_rate_samples);
 
@@ -305,20 +331,22 @@ dump (void)
   else
     min = 0.0;
   
-  printf ("Cwmp session rate [sess/s]: min %.2f avg %.2f max %.2f "
-	  "stddev %.2f (%u/%u)\n", min, avg, st.rate_max, stddev,
-	  st.num_succeeded, st.num_succeeded + st.num_failed);
+  printf ("Cwmp session rate [sess/s]: min %.2f avg %.2f max %.2f stddev %.2f\n",
+	  min, avg, st.rate_max, stddev);
 
   avg = 0.0;
   if (st.num_succeeded > 0)
     avg = st.lifetime_sum/st.num_succeeded;
   printf ("Cwmp session lifetime [s]: %.1f\n", avg);
 
-  rate_succeeded = st.num_succeeded * 100 / param.cwmp.num_sessions;
+  avg = st.num_succeeded * 100 / (double) param.cwmp.num_sessions;
   printf ("Cwmp session succeeded [sess]: total %d (%.1f%%)\n",
-          st.num_succeeded, rate_succeeded);
-  printf ("Cwmp session failed [sess]: total %d (%.1f%%)\n",
-          st.num_failed, 100 - rate_succeeded);
+          st.num_succeeded, avg);
+  printf ("Cwmp session failed [sess]: total %d (%.1f%%) work-flow %d "
+          "bad-request %d no-response %d others %d\n",
+          st.num_err_workflow + st.num_err_bad_req + st.num_err_others + st.num_err_no_resq,
+          100 - avg, st.num_err_workflow, st.num_err_bad_req,
+          st.num_err_no_resq, st.num_err_others);
   printf ("Cwmp size sent rate [B/sess]: %zu (total %zu)\n",
           st.req_bytes_sent / param.cwmp.num_sessions, st.req_bytes_sent);
 }
