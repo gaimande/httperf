@@ -1,8 +1,6 @@
 #ifndef cwmp_h
 #define cwmp_h
 
-//extern size_t sess_private_data_offset;
-
 #define CWMP_SESS_PRIVATE_DATA(c)					\
   ((Cwmp_Sess_Private_Data *) ((char *)(c) + cwmp_sess_private_data_offset))
 

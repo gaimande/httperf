@@ -53,10 +53,6 @@
 #include <session.h>
 #include <cwmp.h>
 
-/* Maximum number of sessions that can be defined in the configuration
-   file.  */
-#define MAX_SESSION_TEMPLATES	1000
-
 #ifndef TRUE
 #define TRUE  (1)
 #endif
@@ -64,8 +60,8 @@
 #define FALSE (0)
 #endif
 
-#define CWMP_SERIAL_MAX_LEN     32
-#define CWMP_SERIAL_STR         "%s%05d"
+#define CWMP_MAX_CPE_DIGIT_NUMBER       7           /* Maximum milion devices */
+#define CWMP_SERIAL_STR                 "%s%0*d"
 
 /* Methods allowed for a request: */
 enum
@@ -207,6 +203,12 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   {
         free (priv->current_req);
         priv->current_req = NULL;
+  }
+
+  if (priv->serial != NULL)
+  {
+        free (priv->serial);
+        priv->serial = NULL;
   } 
 
   if (++num_sessions_destroyed >= param.cwmp.num_sessions)
@@ -413,13 +415,21 @@ user_think_time_expired (struct Timer *t, Any_Type arg)
 /* Create a new session and fill in our private information.  */
 static int
 sess_create (Any_Type arg)
-{
-  char serial[CWMP_SERIAL_MAX_LEN] = {0};
+{ 
+  int ret, serial_len;
   Cwmp_Sess_Private_Data *priv;
   Sess *sess;
 
+  if (num_sessions_generated == 0)
+  {
+     sess_time_start = timer_now();
+  }
+
   if (num_sessions_generated++ >= param.cwmp.num_sessions)
+  {
+    sess_time_stop = timer_now();
     return -1;
+  }
 
   sess = sess_new ();  
 
@@ -436,14 +446,21 @@ sess_create (Any_Type arg)
   }
   memset (priv->current_req, 0x0, sizeof(REQ));
 
-  snprintf (serial, sizeof(serial), CWMP_SERIAL_STR,
-            param.cwmp.serial_prefix, num_sessions_generated);
-
-  priv->serial = strdup(serial);
+  serial_len = strlen(param.cwmp.serial_prefix) + CWMP_MAX_CPE_DIGIT_NUMBER + 1;
+  priv->serial = malloc (serial_len);
   if (NULL == priv->serial)
   {
         fprintf (stderr, "Not enough memory.\n");
         return -1;
+  }
+
+  ret = snprintf (priv->serial, serial_len, CWMP_SERIAL_STR,
+                  param.cwmp.serial_prefix, CWMP_MAX_CPE_DIGIT_NUMBER,
+                  num_sessions_generated);
+  if (ret >= serial_len)
+  {
+     fprintf (stderr, "snprintf was truncated.\n");
+     return -1;
   }
   
   priv->trans_seq = 1;

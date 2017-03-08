@@ -103,6 +103,12 @@ int main(int argc, char *argv[])
 		*(end+1) = '\0';
 		fputs (r_buf, fw);
 
+		/* Check long object */
+		if (NULL == strstr(r_buf, ">"))
+		{
+			fputs (" ", fw);
+		}
+
 		if (strstr(r_buf, soap_end) != NULL)
 		{
 			fputs (script_trailing, fw);

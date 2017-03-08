@@ -95,6 +95,8 @@ int             periodic_stats;
 Cmdline_Params  param;
 Time            test_time_start;
 Time            test_time_stop;
+Time            sess_time_start;
+Time            sess_time_stop;
 struct rusage   test_rusage_start;
 struct rusage   test_rusage_stop;
 size_t          object_type_size[OBJ_NUM_TYPES];
@@ -930,7 +932,8 @@ main(int argc, char **argv)
 				name = "bad number of sessions (1st param)";
 				param.cwmp.num_sessions =
 				    strtoul(optarg, &end, 0);
-				if (end == optarg || errno == ERANGE)
+				if (end == optarg || errno == ERANGE ||
+                                    param.cwmp.num_sessions <= 0)
 					goto bad_cwmp_param;
 				optarg = end + 1;
 

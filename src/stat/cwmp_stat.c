@@ -318,6 +318,7 @@ dump (void)
   strftime(start_s, sizeof(start_s), "%Y-%m-%d %H:%M:%S", localtime(&start_t));
   strftime(stop_s, sizeof(stop_s), "%Y-%m-%d %H:%M:%S", localtime(&stop_t));
   printf ("Cwmp testing time: begin %s end %s\n", start_s, stop_s);
+  printf ("Cwmp session generation time: %.3f s\n", sess_time_stop - sess_time_start);
 
   avg = 0;
   stddev = 0;
