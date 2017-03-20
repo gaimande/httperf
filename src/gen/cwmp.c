@@ -76,8 +76,9 @@ static const char *call_method_name[] =
   };
 
 size_t cwmp_sess_private_data_offset;
-static int num_sessions_generated;
+u_int cwmp_num_sessions_generated;
 static int num_sessions_destroyed;
+static int num_active_sess;
 static Rate_Generator rg_cwmp;
 
 /* This is an array rather than a list because we may want different
@@ -209,10 +210,15 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   {
         free (priv->serial);
         priv->serial = NULL;
-  } 
+  }
 
-  if (++num_sessions_destroyed >= param.cwmp.num_sessions)
+  num_active_sess--;
+
+  if (0 == param.forever &&
+      ++num_sessions_destroyed >= param.cwmp.num_sessions)
+  {
     core_exit ();
+  }
 }
 
 static void
@@ -416,22 +422,41 @@ user_think_time_expired (struct Timer *t, Any_Type arg)
 static int
 sess_create (Any_Type arg)
 { 
+  static int first_time, cpe_idx;
   int ret, serial_len;
   Cwmp_Sess_Private_Data *priv;
   Sess *sess;
 
-  if (num_sessions_generated == 0)
+  if (0 == first_time)
   {
+     first_time++;
      sess_time_start = timer_now();
   }
 
-  if (num_sessions_generated++ >= param.cwmp.num_sessions)
+  if (param.max_sess != 0 && num_active_sess >= param.max_sess)
   {
-    sess_time_stop = timer_now();
-    return -1;
+     return 0;
   }
 
-  sess = sess_new ();  
+  if (cpe_idx >= param.cwmp.num_sessions)
+  {
+     if (param.forever)
+     {
+        cpe_idx = 0;
+     }
+     else
+     {        
+        return -1;
+     }
+  }
+
+  sess = sess_new ();
+
+  num_active_sess++;
+  if (++cwmp_num_sessions_generated == param.cwmp.num_sessions)
+  {
+     sess_time_stop = timer_now();
+  }
 
   priv = CWMP_SESS_PRIVATE_DATA (sess);
   priv->current_burst = session_templates.current_burst;
@@ -456,7 +481,7 @@ sess_create (Any_Type arg)
 
   ret = snprintf (priv->serial, serial_len, CWMP_SERIAL_STR,
                   param.cwmp.serial_prefix, CWMP_MAX_CPE_DIGIT_NUMBER,
-                  num_sessions_generated);
+                  ++cpe_idx);
   if (ret >= serial_len)
   {
      fprintf (stderr, "snprintf was truncated.\n");

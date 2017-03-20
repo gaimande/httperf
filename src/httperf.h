@@ -179,6 +179,8 @@ typedef struct Cmdline_Params
         char *serial_prefix;    /* device serial number prefix */
       }
     cwmp;
+    int forever;		/* run this test forever */
+    u_long max_sess;	        /* max # of active sessions */
   }
 Cmdline_Params;
 

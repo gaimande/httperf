@@ -95,6 +95,7 @@ Cwmp_Stat_Sess_Private_Data;
 
 static size_t cwmp_stat_sess_private_data_offset = -1;
 extern size_t cwmp_sess_private_data_offset;
+extern u_int cwmp_num_sessions_generated;
 
 static unsigned int 
 get_screen_width (void)
@@ -247,8 +248,11 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
       ++st.num_succeeded;
     }
   }
-  
-  process_bar_print();
+
+  if (0 == param.forever)
+  {
+    process_bar_print();
+  }
 }
 
 static void
@@ -269,8 +273,11 @@ call_send_start (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   {
     st.num_inform_completed++;
   }
-  
-  process_bar_print();
+
+  if (0 == param.forever)
+  {
+    process_bar_print();
+  }
 }
 
 static void
@@ -318,7 +325,12 @@ dump (void)
   strftime(start_s, sizeof(start_s), "%Y-%m-%d %H:%M:%S", localtime(&start_t));
   strftime(stop_s, sizeof(stop_s), "%Y-%m-%d %H:%M:%S", localtime(&stop_t));
   printf ("Cwmp testing time: begin %s end %s\n", start_s, stop_s);
-  printf ("Cwmp session generation time: %.3f s\n", sess_time_stop - sess_time_start);
+
+  if (0 == param.forever)
+  {
+    printf ("Cwmp session generation time: %.3f s\n",
+            sess_time_stop - sess_time_start);
+  }
 
   avg = 0;
   stddev = 0;
@@ -340,7 +352,7 @@ dump (void)
     avg = st.lifetime_sum/st.num_succeeded;
   printf ("Cwmp session lifetime [s]: %.1f\n", avg);
 
-  avg = st.num_succeeded * 100 / (double) param.cwmp.num_sessions;
+  avg = st.num_succeeded * 100 / (double) cwmp_num_sessions_generated;
   printf ("Cwmp session succeeded [sess]: total %d (%.1f%%)\n",
           st.num_succeeded, avg);
   printf ("Cwmp session failed [sess]: total %d (%.1f%%) work-flow %d "
@@ -349,7 +361,7 @@ dump (void)
           100 - avg, st.num_err_workflow, st.num_err_bad_req,
           st.num_err_no_resq, st.num_err_others);
   printf ("Cwmp size sent rate [B/sess]: %zu (total %zu)\n",
-          st.req_bytes_sent / param.cwmp.num_sessions, st.req_bytes_sent);
+          st.req_bytes_sent / cwmp_num_sessions_generated, st.req_bytes_sent);
 }
 
 Stat_Collector cwmp_stat =

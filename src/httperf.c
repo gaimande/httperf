@@ -166,6 +166,8 @@ static struct option longopts[] = {
 	{"wsesspage", required_argument, (int *) &param.wsesspage, 0},
 	{"wset", required_argument, (int *) &param.wset, 0},
 	{"cwmp", required_argument, (int *) &param.cwmp, 0},
+	{"forever", no_argument, &param.forever, 1},
+	{"max-sessions", required_argument, (int *) &param.max_sess, 0},
 	{0, 0, 0, 0}
 };
 
@@ -192,7 +194,7 @@ usage(void)
 	       "\t[--think-timeout X] [--timeout X] [--verbose] [--version]\n"
 	       "\t[--wlog y|n,file] [--wsess N,N,X] [--wsesslog N,X,file]\n"
 	       "\t[--wset N,X]\n"
-	       "\t[--cwmp y|n,file]\n"
+	       "\t[--cwmp y|n,file] [--forever]\n"
 	       "\t[--runtime X]\n"
 	       "\t[--use-timer-cache]\n"
 	       "\t[--periodic-stats]\n", prog_name);
@@ -375,6 +377,15 @@ main(int argc, char **argv)
 				if (errno == ERANGE || end == optarg || *end) {
 					fprintf(stderr,
 						"%s: illegal max. # of connection %s\n",
+						prog_name, optarg);
+					exit(1);
+				}
+			} else if (flag == &param.max_sess) {
+				errno = 0;
+				param.max_sess = strtoul(optarg, &end, 10);
+				if (errno == ERANGE || end == optarg || *end) {
+					fprintf(stderr,
+						"%s: illegal max. # of sessions %s\n",
 						prog_name, optarg);
 					exit(1);
 				}
@@ -1351,6 +1362,13 @@ main(int argc, char **argv)
 		printf(" --cwmp=%u,%.3f,%s,%s", param.cwmp.num_sessions,
 		       param.cwmp.think_time, param.cwmp.file, param.cwmp.serial_prefix);
 	}
+
+        if (param.forever)
+		printf(" --forever");
+
+        if (param.max_sess)
+		printf(" --max-sessions=%lu", param.max_sess);
+        
 	if (periodic_stats)
 		printf(" --periodic-stats");
 	printf("\n");
