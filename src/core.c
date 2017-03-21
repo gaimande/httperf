@@ -90,6 +90,7 @@
 #define MIN_IP_PORT	IPPORT_RESERVED
 #define MAX_IP_PORT	65535
 #define BITSPERLONG	(8*sizeof (u_long))
+#define STD_STREAM_CNT  3       /* stdin, stdout, stderr */
 
 struct local_addr {
 	struct in_addr ip;
@@ -117,8 +118,8 @@ static struct timeval select_timeout;
 #endif
 
 #ifdef HAVE_POLL
-static struct pollfd pfds[20000];
-static int poll_timeout = 3000;
+static struct pollfd *pfds;
+static int poll_timeout = 3000;                 /* Default timeout 3 seconds */
 #endif /* HAVE_POLL */
 
 static struct sockaddr_in myaddr;
@@ -993,6 +994,15 @@ core_init(void)
 		exit(1);
 	}
 
+        pfds = calloc (param.cwmp.num_sessions + STD_STREAM_CNT, sizeof(struct pollfd));
+        if (NULL == pfds)
+        {
+		fprintf (stderr,
+			"%s: failed to alloc pollfd struct with %d elements: %s",
+			prog_name, param.cwmp.num_sessions, strerror(errno));
+		exit(1);
+        }
+
 	if (verbose)
 		printf("%s: maximum number of open descriptors = %ld\n",
 		       prog_name, rlimit.rlim_max);
@@ -1406,8 +1416,8 @@ core_close(Conn * conn)
 #ifndef HAVE_KEVENT
 		sd_to_conn[sd] = 0;
 #ifdef HAVE_POLL
-                pfds[sd].events &= ~POLLOUT;
-                pfds[sd].events &= ~POLLIN;
+		pfds[sd].events = 0;
+		pfds[sd].revents = 0;
 #else
 		FD_CLR(sd, &wrfds);
 		FD_CLR(sd, &rdfds);
@@ -1503,7 +1513,7 @@ core_loop (void)
         {
             if (n < 0)
             {
-                fprintf(stderr, "%s.core_loop: select failed: %s, max_sd %d, FD_SETSIZE %d\n", prog_name, strerror(errno), max_sd, FD_SETSIZE);
+                fprintf(stderr, "%s.core_loop: poll failed: %s\n", prog_name, strerror(errno));
                 exit(1);
             }
             continue;
