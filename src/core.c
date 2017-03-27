@@ -994,6 +994,7 @@ core_init(void)
 		exit(1);
 	}
 
+#ifdef HAVE_POLL
         pfds = calloc (param.cwmp.num_sessions + STD_STREAM_CNT, sizeof(struct pollfd));
         if (NULL == pfds)
         {
@@ -1002,6 +1003,7 @@ core_init(void)
 			prog_name, param.cwmp.num_sessions, strerror(errno));
 		exit(1);
         }
+#endif /* HAVE_POLL */
 
 	if (verbose)
 		printf("%s: maximum number of open descriptors = %ld\n",
