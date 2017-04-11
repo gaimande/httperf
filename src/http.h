@@ -34,6 +34,18 @@
 #ifndef http_h
 #define http_h
 
+/* Methods allowed for a request: */
+enum
+{
+    HM_DELETE, HM_GET, HM_HEAD, HM_OPTIONS, HM_POST, HM_PUT, HM_TRACE,
+    HM_LEN
+};
+
+static const char *call_method_name[] =
+{
+    "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT", "TRACE"
+};
+
 extern void http_process_reply_bytes (Call *c, char **buf, size_t *buf_len);
 
 #endif /* http_h */

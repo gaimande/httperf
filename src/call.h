@@ -41,10 +41,13 @@
 typedef enum IOV_Element
   {
     IE_METHOD,
-    IE_BLANK,		/* space separating method from location */
+    IE_BLANK1,		/* space separating method from location */
     IE_LOC,		/* for proxy requests only */
     IE_URI,
+    IE_BLANK2,
     IE_PROTL,
+    IE_STATUS_CODE,
+    IE_USER_AGENT,
     IE_HOST,		/* for the "Host:" header */
     IE_NEWLINE1,
     IE_FIRST_HEADER,
@@ -150,6 +153,42 @@ extern int call_append_request_header (Call *c, const char *hdr, size_t len);
       c->req.iov[IE_CONTENT].iov_base = (caddr_t) content;	\
       c->req.iov[IE_CONTENT].iov_len = content_len;		\
     }								\
+  while (0)
+
+#define call_set_status_code(c, status, status_len)                  \
+    do                                                               \
+      {                                                              \
+        c->req.iov[IE_STATUS_CODE].iov_base = (caddr_t) status;      \
+        c->req.iov[IE_STATUS_CODE].iov_len = status_len;             \
+      }                                                              \
+    while (0)
+
+#define call_setup_response(c)                                       \
+    do                                                               \
+      {                                                              \
+        c->req.iov[IE_METHOD].iov_base = (caddr_t) NULL;             \
+        c->req.iov[IE_METHOD].iov_len = 0;                           \
+        c->req.iov[IE_BLANK1].iov_base = (caddr_t) NULL;             \
+        c->req.iov[IE_BLANK1].iov_len = 0;                           \
+        c->req.iov[IE_LOC].iov_base = (caddr_t) NULL;                \
+        c->req.iov[IE_LOC].iov_len = 0;                              \
+        c->req.iov[IE_URI].iov_base = (caddr_t) NULL;                \
+        c->req.iov[IE_URI].iov_len = 0;                              \
+        c->req.iov[IE_BLANK2].iov_base = (caddr_t) NULL;             \
+        c->req.iov[IE_BLANK2].iov_len = 0;                           \        
+      }                                                              \
+    while (0)
+
+#define call_setup_request(c)                                        \
+  do                                                                 \
+    {                                                                \
+      c->req.iov[IE_BLANK1].iov_base = (caddr_t) " ";                \
+      c->req.iov[IE_BLANK1].iov_len = 1;                             \
+      c->req.iov[IE_BLANK2].iov_base = (caddr_t) " ";                \
+      c->req.iov[IE_BLANK2].iov_len = 1;                             \
+      c->req.iov[IE_STATUS_CODE].iov_base = (caddr_t) NULL;          \
+      c->req.iov[IE_STATUS_CODE].iov_len = 0;                        \
+    }                                                                \
   while (0)
 
 #endif /* call_h */

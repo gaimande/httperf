@@ -91,6 +91,7 @@
 #define MAX_IP_PORT	65535
 #define BITSPERLONG	(8*sizeof (u_long))
 #define STD_STREAM_CNT  3       /* stdin, stdout, stderr */
+#define CWMP_LISTEN_BACKLOG        511
 
 struct local_addr {
 	struct in_addr ip;
@@ -113,12 +114,15 @@ static u_long   max_burst_len;
 static int	kq, max_sd = 0;
 #else
 static fd_set   rdfds, wrfds;
-static int      min_sd = 0x7fffffff, max_sd = 0, alloced_sd_to_conn = 0;
+static int      min_sd = 0x7fffffff, max_sd = 0;
+static int      min_cpe_srv_sd = 0x7fffffff, max_cpe_srv_sd = 0;
 static struct timeval select_timeout;
+int alloced_sd_to_conn = 0;
+static int alloced_pfds;
 #endif
 
 #ifdef HAVE_POLL
-static struct pollfd *pfds;
+struct pollfd *pfds;
 static int poll_timeout = 3000;                 /* Default timeout 3 seconds */
 #endif /* HAVE_POLL */
 
@@ -126,18 +130,23 @@ static struct sockaddr_in myaddr;
 static struct address_pool myaddrs;
 #ifndef HAVE_KEVENT
 Conn          **sd_to_conn;
+int *sd_to_cpe_listen_port;
 #endif
+
+static char http10ver[] = "HTTP/1.0";
+static char http11ver[] = "HTTP/1.1";
+
 static char     http10req[] =
-    " HTTP/1.0\r\nUser-Agent: httperf/" VERSION
+    "\r\nUser-Agent: httperf/" VERSION
     "\r\nConnection: keep-alive\r\nHost: ";
 static char     http11req[] =
-    " HTTP/1.1\r\nUser-Agent: httperf/" VERSION "\r\nHost: ";
+    "\r\nUser-Agent: httperf/" VERSION "\r\nHost: ";
 
 static char     http10req_nohost[] =
-    " HTTP/1.0\r\nUser-Agent: httperf/" VERSION
+    "\r\nUser-Agent: httperf/" VERSION
     "\r\nConnection: keep-alive";
 static char     http11req_nohost[] =
-    " HTTP/1.1\r\nUser-Agent: httperf/" VERSION;
+    "\r\nUser-Agent: httperf/" VERSION;
 
 #ifndef SOL_TCP
 # define SOL_TCP 6		/* probably ought to do getprotlbyname () */
@@ -161,13 +170,13 @@ static char     http11req_nohost[] =
 
 enum Syscalls {
 	SC_BIND, SC_CONNECT, SC_READ, SC_SELECT, SC_SOCKET, SC_WRITEV,
-	SC_SSL_READ, SC_SSL_WRITEV, SC_KEVENT,
+	SC_SSL_READ, SC_SSL_WRITEV, SC_KEVENT, SC_LISTEN, SC_ACCEPT,
 	SC_NUM_SYSCALLS
 };
 
 static const char *const syscall_name[SC_NUM_SYSCALLS] = {
 	"bind", "connct", "read", "select", "socket", "writev",
-	"ssl_read", "ssl_writev", "kevent"
+	"ssl_read", "ssl_writev", "kevent", "listen", "accept"
 };
 static Time     syscall_time[SC_NUM_SYSCALLS];
 static u_int    syscall_count[SC_NUM_SYSCALLS];
@@ -425,6 +434,28 @@ set_active(Conn * s, enum IO_DIR dir)
 		exit(1);
 	}
 #elif defined HAVE_POLL
+        if (sd >= alloced_pfds)
+        {
+                size_t size, old_size;
+
+                old_size = alloced_pfds * sizeof(pfds[0]);
+                alloced_pfds += 2048;
+                size = alloced_pfds * sizeof(pfds[0]);
+                if (pfds)
+                        pfds = realloc(pfds, size);
+                else
+                        pfds = malloc(size);
+                if (!pfds) {
+                        if (DBG > 0)
+                                fprintf(stderr,
+                                        "%s.set_active.realloc: %s\n",
+                                        prog_name, strerror(errno));
+                        conn_failure(s, errno);
+	                return;
+                }
+                memset((char *) pfds + old_size, 0, size - old_size);
+        }
+
         if (dir == WRITE)
                 pfds[sd].events |= POLLOUT;
         else
@@ -731,6 +762,61 @@ do_recv(Conn * s)
 		set_active(c->conn, READ);
 }
 
+static void
+do_accept (int sd)
+{
+    int connsd;
+    Any_Type   arg;
+    char buf[8193] = {0};
+    char method_str[32] = {0};
+    ssize_t nread = 0;
+    Conn      *conn;
+    
+    SYSCALL(ACCEPT,
+            connsd = accept(sd, (struct sockaddr*)NULL, NULL));
+    if (connsd < 0)
+    {
+        if (DBG > 0)
+            fprintf(stderr,
+                    "%s.core_loop.accept: %s\n",
+                    prog_name, strerror(errno));
+        exit(1);
+    }        
+        
+    SYSCALL(READ, nread = read(connsd, buf, sizeof(buf) - 1));
+    
+    if (nread <= 0) {
+    	if (DBG > 0) {              		 
+    		fprintf(stderr,
+    			"%s.do_recv: read() failed: %s\n",
+    			prog_name, strerror(errno));
+    	}
+    
+    	return;
+    }
+    
+    buf[nread] = '\0'; /* ensure buffer is '\0' terminated */
+
+    if (sscanf (buf, "%s", method_str) == 1)
+    {
+        if (!strncmp (method_str, call_method_name[HM_GET],
+                      strlen (call_method_name[HM_GET])))
+        {
+            conn = conn_new ();
+            if (!conn)
+            {
+                return;
+            }
+            
+            conn->sd = connsd;
+            conn->myport = sd_to_cpe_listen_port[sd];
+            
+            arg.l = 0;
+            event_signal(EV_CONN_REQ, (Object *) conn, arg);
+        }
+    }        
+}
+
 struct sockaddr_in *
 core_addr_intern(const char *server, size_t server_len, int port)
 {
@@ -906,7 +992,6 @@ core_get_next_myaddr(void)
 static void
 core_runtime_timer(struct Timer *t, Any_Type arg)
 {
-
 	core_exit();
 }
 
@@ -994,16 +1079,14 @@ core_init(void)
 		exit(1);
 	}
 
-#ifdef HAVE_POLL
-        pfds = calloc (param.cwmp.num_sessions + STD_STREAM_CNT, sizeof(struct pollfd));
-        if (NULL == pfds)
+        sd_to_cpe_listen_port = calloc (param.cwmp.num_sessions + STD_STREAM_CNT, sizeof(int));
+        if (NULL == sd_to_cpe_listen_port)
         {
 		fprintf (stderr,
-			"%s: failed to alloc pollfd struct with %d elements: %s",
+			"%s: failed to alloc sd_to_cpe_listen_port with %d elements: %s",
 			prog_name, param.cwmp.num_sessions, strerror(errno));
 		exit(1);
         }
-#endif /* HAVE_POLL */
 
 	if (verbose)
 		printf("%s: maximum number of open descriptors = %ld\n",
@@ -1273,7 +1356,7 @@ core_connect(Conn * s)
 			fprintf(stderr,
 				"%s.core_connect.connect: %s (max_sd=%d)\n",
 				prog_name, strerror(errno), max_sd);
-		if (s->myport > 0)
+		if (param.hog && s->myport > 0)
 			port_put(s->myaddr, s->myport);
 		goto failure;
 	}
@@ -1316,24 +1399,37 @@ core_send(Conn * conn, Call * call)
 	case 0x10000:
 		if (param.no_host_hdr) {
 			call->req.iov[IE_PROTL].iov_base =
-			    (caddr_t) http10req_nohost;
+			    (caddr_t) http10ver;
 			call->req.iov[IE_PROTL].iov_len =
+			    sizeof(http10ver) - 1;
+                        call->req.iov[IE_USER_AGENT].iov_base =
+			    (caddr_t) http10req_nohost;
+			call->req.iov[IE_USER_AGENT].iov_len =
 			    sizeof(http10req_nohost) - 1;
 		} else {
-			call->req.iov[IE_PROTL].iov_base = (caddr_t) http10req;
+			call->req.iov[IE_PROTL].iov_base = (caddr_t) http10ver;
 			call->req.iov[IE_PROTL].iov_len =
+			    sizeof(http10ver) - 1;
+                        call->req.iov[IE_USER_AGENT].iov_base = (caddr_t) http10req;
+			call->req.iov[IE_USER_AGENT].iov_len =
 			    sizeof(http10req) - 1;
 		}
 		break;
 
 	case 0x10001:
 		if (param.no_host_hdr) {
-			call->req.iov[IE_PROTL].iov_base = http11req_nohost;
+			call->req.iov[IE_PROTL].iov_base = http11ver;
 			call->req.iov[IE_PROTL].iov_len =
+			    sizeof(http11ver) - 1;
+                        call->req.iov[IE_USER_AGENT].iov_base = http11req_nohost;
+			call->req.iov[IE_USER_AGENT].iov_len =
 			    sizeof(http11req_nohost) - 1;
 		} else {
-			call->req.iov[IE_PROTL].iov_base = http11req;
+			call->req.iov[IE_PROTL].iov_base = http11ver;
 			call->req.iov[IE_PROTL].iov_len =
+			    sizeof(http11ver) - 1;
+                        call->req.iov[IE_USER_AGENT].iov_base = http11req;
+			call->req.iov[IE_USER_AGENT].iov_len =
 			    sizeof(http11req) - 1;
 		}
 		break;
@@ -1428,7 +1524,7 @@ core_close(Conn * conn)
 		conn->reading = 0;
 		conn->writing = 0;
 	}
-	if (conn->myport > 0)
+	if (param.hog && conn->myport > 0)
 		port_put(conn->myaddr, conn->myport);
 
 	/*
@@ -1526,6 +1622,12 @@ core_loop (void)
             if (0 == pfds[sd].revents)
             {
                 continue;
+            }
+
+            if (min_cpe_srv_sd <= sd && sd <= max_cpe_srv_sd)
+            {
+                do_accept (sd);
+                continue;                                
             }
 
             is_readable = is_writable = 0;
@@ -1716,4 +1818,132 @@ core_exit(void)
 		putchar('\n');
 	}
 #endif
+}
+
+void
+core_listen (int port)
+{
+    int result, optval, sd;
+    struct sockaddr_in serv_addr;
+    
+    SYSCALL(SOCKET, sd = socket(AF_INET, SOCK_STREAM, 0));
+    if (sd < 0)
+    {
+        if (DBG > 0)
+            fprintf(stderr,
+                "%s.core_listen.socket: %s (max_sd=%d)\n",
+                prog_name, strerror(errno), max_sd);
+        goto failure;
+    }
+    
+    if (fcntl(sd, F_SETFL, O_NONBLOCK) < 0)
+    {
+        fprintf(stderr, "%s.core_listen.fcntl: %s\n",
+            prog_name, strerror(errno));
+        goto failure;
+    }
+
+    /*
+     * Disable Nagle algorithm so we don't delay needlessly when
+     * pipelining requests.  
+     */
+    optval = 1;
+    if (setsockopt(sd, SOL_TCP, TCP_NODELAY, & optval, sizeof(optval)) < 0)
+    {
+        fprintf(stderr, "%s.core_listen.setsockopt(SO_SNDBUF): %s\n",
+            prog_name, strerror(errno));
+        goto failure;
+    }
+    
+    optval = param.send_buffer_size;
+    if (setsockopt(sd, SOL_SOCKET, SO_SNDBUF, & optval, sizeof(optval)) < 0)
+    {
+        fprintf(stderr, "%s.core_listen.setsockopt(SO_SNDBUF): %s\n",
+            prog_name, strerror(errno));
+        goto failure;
+    }
+    
+    optval = param.recv_buffer_size;
+    if (setsockopt(sd, SOL_SOCKET, SO_RCVBUF, & optval, sizeof(optval)) < 0)
+    {
+        fprintf(stderr, "%s.core_listen.setsockopt(SO_SNDBUF): %s\n",
+            prog_name, strerror(errno));
+        goto failure;
+    }
+
+    memset(&serv_addr, '0', sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serv_addr.sin_port = htons(port);
+
+    SYSCALL(BIND,
+            result = bind(sd, (struct sockaddr *) &serv_addr,
+            sizeof(serv_addr)));
+    if (result != 0)
+    {
+        if (DBG > 0)
+            fprintf(stderr,
+                    "%s.core_listen.bind: %s\n",
+                    prog_name, strerror(errno));
+        goto failure;
+    }
+
+    SYSCALL(LISTEN,
+            result = listen(sd, CWMP_LISTEN_BACKLOG));
+    if (result != 0)
+    {
+        if (DBG > 0)
+            fprintf(stderr,
+                    "%s.core_listen.listen: %s\n",
+                    prog_name, strerror(errno));
+        goto failure;
+    }
+
+    if (sd >= alloced_pfds)
+    {
+        size_t size, old_size;
+
+        old_size = alloced_pfds * sizeof(pfds[0]);
+        alloced_pfds += 2048;
+        size = alloced_pfds * sizeof(pfds[0]);
+
+        if (pfds)
+            pfds = realloc(pfds, size);
+        else
+            pfds = malloc(size);
+
+        if (!pfds)
+        {
+            if (DBG > 0)
+                fprintf(stderr,
+                        "%s.set_active.realloc: %s\n",
+                        prog_name, strerror(errno));
+            
+            core_exit();
+            return;
+        }
+        
+        memset((char *) pfds + old_size, 0, size - old_size);
+    }
+
+    pfds[sd].events |= POLLIN;
+    
+    if (sd < min_cpe_srv_sd)
+        min_cpe_srv_sd = sd;
+    
+    if (sd >= max_cpe_srv_sd)
+    {
+        max_cpe_srv_sd = sd;
+        pfds[sd].fd = sd;
+    }
+
+    sd_to_cpe_listen_port[sd] = port;
+
+    min_sd = (min_sd > min_cpe_srv_sd) ? min_cpe_srv_sd : min_sd;
+    max_sd = (max_sd > max_cpe_srv_sd) ? max_sd : max_cpe_srv_sd;
+
+    return;
+    
+failure:
+    exit (1);
 }

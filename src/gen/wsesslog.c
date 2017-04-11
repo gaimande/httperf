@@ -92,6 +92,7 @@
 #include <localevent.h>
 #include <rate.h>
 #include <session.h>
+#include <http.h>
 
 /* Maximum number of sessions that can be defined in the configuration
    file.  */
@@ -141,19 +142,7 @@ struct Sess_Private_Data
 
     BURST *current_burst;	/* the current burst we're working on */
     REQ *current_req;		/* the current request we're working on */
-  };
-
-/* Methods allowed for a request: */
-enum
-  {
-    HM_DELETE, HM_GET, HM_HEAD, HM_OPTIONS, HM_POST, HM_PUT, HM_TRACE,
-    HM_LEN
-  };
-
-static const char *call_method_name[] =
-  {
-    "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT", "TRACE"
-  };
+  }; 
 
 static size_t sess_private_data_offset;
 static int num_sessions_generated;

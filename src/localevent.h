@@ -53,6 +53,7 @@ typedef enum Event_Type
     EV_CONN_DESTROYED,
     EV_CONN_FAILED,		/* failed for reasons other than timeout */
     EV_CONN_TIMEOUT,
+    EV_CONN_REQ,
 
     EV_CALL_NEW,
     EV_CALL_ISSUE,
@@ -65,7 +66,7 @@ typedef enum Event_Type
     EV_CALL_RECV_DATA,
     EV_CALL_RECV_FOOTER,
     EV_CALL_RECV_STOP,
-    EV_CALL_DESTROYED,
+    EV_CALL_DESTROYED, 
 
     EV_NUM_EVENT_TYPES
   }

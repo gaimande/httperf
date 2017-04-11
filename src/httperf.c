@@ -95,8 +95,6 @@ int             periodic_stats;
 Cmdline_Params  param;
 Time            test_time_start;
 Time            test_time_stop;
-Time            sess_time_start;
-Time            sess_time_stop;
 struct rusage   test_rusage_start;
 struct rusage   test_rusage_stop;
 size_t          object_type_size[OBJ_NUM_TYPES];

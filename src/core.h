@@ -46,4 +46,6 @@ extern void core_close (Conn *conn);
 extern void core_loop (void);
 extern void core_exit (void);
 
+extern void core_listen (int port);
+
 #endif /* core_h */

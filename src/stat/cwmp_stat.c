@@ -169,6 +169,9 @@ process_bar_print (void)
   int bar_width = colum_width  - BAR_BORDER_WIDTH - PERCENT_FORMAT_LENGTH - WHITESPACE_LENGTH;  
   int num_finished = st.num_succeeded+ st.num_err_workflow + st.num_err_bad_req + st.num_err_no_resq + st.num_err_others;
 
+  /* FIXME */
+  return;
+  
   if (0 == first_time)
   {
     first_time = 1;
@@ -258,7 +261,6 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 static void
 call_send_start (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 {
-  Cwmp_Stat_Sess_Private_Data *stat_priv;
   Cwmp_Sess_Private_Data *cwmp_priv;
   Sess *sess;
   Call *call;  
@@ -266,7 +268,6 @@ call_send_start (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   assert (et == EV_CALL_SEND_START && object_is_sess (obj));
   call = (Call *) obj;
   sess = session_get_sess_from_call (call);
-  stat_priv = CWMP_STAT_SESS_PRIVATE_DATA (sess);
   cwmp_priv = CWMP_SESS_PRIVATE_DATA (sess);
 
   if (CPE_INFORM_DONE == cwmp_priv->current_cpe_action)
@@ -325,12 +326,6 @@ dump (void)
   strftime(start_s, sizeof(start_s), "%Y-%m-%d %H:%M:%S", localtime(&start_t));
   strftime(stop_s, sizeof(stop_s), "%Y-%m-%d %H:%M:%S", localtime(&stop_t));
   printf ("Cwmp testing time: begin %s end %s\n", start_s, stop_s);
-
-  if (0 == param.forever)
-  {
-    printf ("Cwmp session generation time: %.3f s\n",
-            sess_time_stop - sess_time_start);
-  }
 
   avg = 0;
   stddev = 0;

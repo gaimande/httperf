@@ -52,6 +52,11 @@
 #include <rate.h>
 #include <session.h>
 #include <cwmp.h>
+#include <http.h>
+
+/* Maximum number of sessions that can be defined in the configuration
+   file.  */
+#define MAX_SESSION_TEMPLATES	1000
 
 #ifndef TRUE
 #define TRUE  (1)
@@ -63,34 +68,49 @@
 #define CWMP_MAX_CPE_DIGIT_NUMBER       7           /* Maximum milion devices */
 #define CWMP_SERIAL_STR                 "%s%0*d"
 
-/* Methods allowed for a request: */
-enum
-  {
-    HM_DELETE, HM_GET, HM_HEAD, HM_OPTIONS, HM_POST, HM_PUT, HM_TRACE,
-    HM_LEN
-  };
-
-static const char *call_method_name[] =
-  {
-    "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT", "TRACE"
-  };
+#define CWMP_INDEX_TO_LISTEN_PORT(_I_)  (2000 + _I_)
+#define CWMP_LISTEN_PORT_TO_INDEX(_I_)  (_I_ - 2000)
 
 size_t cwmp_sess_private_data_offset;
 u_int cwmp_num_sessions_generated;
-static int num_sessions_destroyed;
 static int num_active_sess;
-static Rate_Generator rg_cwmp;
 
 /* This is an array rather than a list because we may want different
    httperf clients to start at different places in the sequence of
    sessions. */
-static Cwmp_Sess_Private_Data session_templates;
+static int num_templates;
+static Cwmp_Sess_Private_Data session_templates[MAX_SESSION_TEMPLATES] =
+  {
+    { 0, }
+  };
+
+static int
+get_cpe_idx_from_serial (const char *serial)
+{
+    int i;
+    int serial_len = strlen(serial);
+    char buf[16] = {0};    
+
+    buf[CWMP_MAX_CPE_DIGIT_NUMBER] = '\0';
+    for (i = CWMP_MAX_CPE_DIGIT_NUMBER - 1; i >= 0; i--)
+    {
+        buf[i] = serial[--serial_len];
+    }
+
+    return atoi(buf);
+}
 
 static int
 cwmp_get_cwmpID (const char *msg, Cwmp_Sess_Private_Data *priv)
 {
     const char *cwmp_node = "<cwmp:ID soap-env:mustUnderstand=\"1\">";
     char *ptr_s, *ptr_e;
+
+    /* We just need to get cwmp ID one time */
+    if (strncmp (priv->cwmpID, priv->serial, sizeof (priv->serial)))
+    {
+        return 0;
+    }
     
     if (NULL != (ptr_s = strstr (msg, cwmp_node)))
     {
@@ -107,6 +127,7 @@ cwmp_get_cwmpID (const char *msg, Cwmp_Sess_Private_Data *priv)
     }
     
     priv->cwmpID = strdup(ptr_s);
+    
     return 0;
 }
 
@@ -115,15 +136,14 @@ cwmp_build_reply_msg (const REQ *template, Cwmp_Sess_Private_Data *priv)
 {
     int len = 0;
     int ret = 0;
+    int str_replace = 0;
     int num_replace = 0;
-    char *str = template->contents;
-    const char* pattern_replace = "%s";
-
-    while (NULL != (str = strstr(str, pattern_replace)))
-    {
-        num_replace++;
-        str += strlen(pattern_replace);
-    }
+    int cpe_idx, cpe_port;
+    int digit_cnt = 0;
+    char *req_template_content = template->contents;
+    const char* str_pattern_replace = "%s";
+    const char* num_pattern_replace = "%d";
+    char cpe_port_str[16] = {0};
 
     /* Use a random cwmpID for the first message */
     if (NULL == priv->cwmpID)
@@ -137,127 +157,114 @@ cwmp_build_reply_msg (const REQ *template, Cwmp_Sess_Private_Data *priv)
         priv->current_req->contents = NULL;
     }
 
-    if (num_replace > 0)
+    if (req_template_content != NULL)
     {
-        len = sizeof(char) * (template->contents_len + strlen(priv->cwmpID) +
-              (num_replace - 1) * strlen(priv->serial) - num_replace * strlen(pattern_replace));
-
-        priv->current_req->contents = calloc(1, len + 1);
-        if (NULL == priv->current_req->contents)
+        cpe_idx = get_cpe_idx_from_serial (priv->serial);
+        cpe_port = CWMP_INDEX_TO_LISTEN_PORT (cpe_idx);
+        while (cpe_port)
         {
-            fprintf (stderr, "not enough memory to allocate\n");
-            return -1;
+            cpe_port = cpe_port / 10;
+            digit_cnt++;
         }
         
-        ret = snprintf (priv->current_req->contents, len + 1, template->contents, 
-                        priv->cwmpID, priv->serial, priv->serial);
-        if (ret > len)
+        while (NULL != (req_template_content = strstr(req_template_content, str_pattern_replace)))
         {
-            fprintf (stderr, "snprintf error\n");
-            return -1;
+            str_replace++;
+            req_template_content += strlen(str_pattern_replace);
         }
-    }
-    else
-    {
-        len = template->contents_len;
-        priv->current_req->contents = strndup (template->contents, len);
-        if (NULL == priv->current_req->contents)
-        {
-            fprintf (stderr, "not enough memory to allocate\n");
-            return -1;
-        }
-    }
 
+        req_template_content = template->contents;
+        while (NULL != (req_template_content = strstr(req_template_content, num_pattern_replace)))
+        {
+            num_replace++;
+            req_template_content += strlen(num_pattern_replace);
+        }
+    
+        if (str_replace > 0)
+        {
+            len = sizeof(char) * (template->contents_len + strlen(priv->cwmpID) +
+                  (str_replace - 1) * strlen(priv->serial) - str_replace * strlen(str_pattern_replace));
+
+            len += num_replace * digit_cnt;
+    
+            priv->current_req->contents = calloc(1, len + 1);
+            if (NULL == priv->current_req->contents)
+            {
+                fprintf (stderr, "not enough memory to allocate\n");
+                return -1;
+            }
+            
+            ret = snprintf (priv->current_req->contents, len + 1, template->contents, 
+                            priv->cwmpID, priv->serial, priv->serial,
+                            CWMP_INDEX_TO_LISTEN_PORT (cpe_idx));
+            if (ret > len)
+            {
+                fprintf (stderr, "snprintf error\n");
+                return -1;
+            }
+        }
+        else
+        {
+            len = template->contents_len;
+            priv->current_req->contents = strndup (template->contents, len);
+            if (NULL == priv->current_req->contents)
+            {
+                fprintf (stderr, "not enough memory to allocate\n");
+                return -1;
+            }
+        }
+    }
+    
     priv->current_req->contents_len = len;
     priv->current_req->method = template->method;
     priv->current_req->uri = template->uri;
     priv->current_req->uri_len = template->uri_len;
     priv->current_req->cpe_action = template->cpe_action;
-
+    priv->current_req->status = template->status;
+    priv->current_req->status_len = template->status_len;
+    priv->current_req->add_hdrs = template->add_hdrs;
+    priv->current_req->add_hdrs_len = template->add_hdrs_len;
+    priv->current_req->cpe_action = template->cpe_action;
+    priv->current_req->noreply = template->noreply;
+    
     return 0;
 }
 
-
-static void
-sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
+static REQ *
+cwmp_find_req_template (Cwmp_Sess_Private_Data *priv)
 {
-  Cwmp_Sess_Private_Data *priv;
-  Sess *sess;
+    int i, req_idx;
+    int num_req_so_far = 0;
+    BURST *bptr;
+    REQ *rptr;
+    Cwmp_Sess_Private_Data *template;
 
-  assert (et == EV_SESS_DESTROYED && object_is_sess (obj));
-  sess = (Sess *) obj;  
+    template = &session_templates[priv->current_sess_template];
 
-  priv = CWMP_SESS_PRIVATE_DATA (sess);
-  if (priv->timer)
+    for (bptr = template->current_burst; bptr != NULL; bptr = bptr->next)
     {
-      timer_cancel (priv->timer);
-      priv->timer = 0;
+        num_req_so_far += bptr->num_reqs;
+        rptr = bptr->req_list;
+        
+        if (priv->num_calls_destroyed >= num_req_so_far)
+        {            
+            continue;
+        }
+        
+        req_idx = bptr->num_reqs - (num_req_so_far - priv->num_calls_destroyed);
+
+        for (i = 0; i < req_idx; i++)
+        {
+            rptr = rptr->next;
+        }
+        break;
     }
 
-  if (priv->current_req->contents != NULL)
-  {
-        free (priv->current_req->contents);
-        priv->current_req->contents = NULL;
-  }
-
-  if (priv->current_req != NULL)
-  {
-        free (priv->current_req);
-        priv->current_req = NULL;
-  }
-
-  if (priv->serial != NULL)
-  {
-        free (priv->serial);
-        priv->serial = NULL;
-  }
-
-  num_active_sess--;
-
-  if (0 == param.forever &&
-      ++num_sessions_destroyed >= param.cwmp.num_sessions)
-  {
-    core_exit ();
-  }
+    return rptr;
 }
 
 static void
-sess_failed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
-{
-  Cwmp_Sess_Private_Data *priv;
-  Sess *sess;
-
-  assert (et == EV_SESS_FAILED && object_is_sess (obj));
-  sess = (Sess *) obj;
-
-  priv = CWMP_SESS_PRIVATE_DATA (sess);
-  priv->cwmp_result = CWMP_ERR_NO_RESP;
-}
-
-REQ *
-cwmp_find_req_template (int trans_seq)
-{
-    int i;
-    REQ *req, *req_list_bk;
-
-    if (trans_seq > session_templates.current_burst->num_reqs)
-    {
-        fprintf (stderr, "Invalid message sequence %d. Maxinum sequence is %d.\n", trans_seq, session_templates.current_burst->num_reqs);
-        return NULL;
-    }
-
-    req = req_list_bk = session_templates.current_burst->req_list;
-    for (i = 1; i < trans_seq; i++)
-    {        
-        req = req->next;        
-    }
-
-    session_templates.current_burst->req_list = req_list_bk;
-    return req;
-}
-
-static void
-issue_calls (Sess *sess, Cwmp_Sess_Private_Data *priv)
+issue_calls (Sess *sess, Cwmp_Sess_Private_Data *priv, Conn *conn)
 {
   int i, retval, n, length;
   const char *method_str;
@@ -275,39 +282,197 @@ issue_calls (Sess *sess, Cwmp_Sess_Private_Data *priv)
   {
     sess_failure (sess);
     return;
+  }
+
+  if (conn)
+  {
+    call->conn = conn;
   }  
 
-  req = priv->current_req;
-
-  req_template = cwmp_find_req_template(priv->trans_seq);
+  req_template = cwmp_find_req_template(priv);
 
   if (req_template == NULL)
     panic ("%s: internal error, cannot find request template for %s\n",
         prog_name, cwmp_cpe_action_name[priv->current_cpe_action]); 
 
   cwmp_build_reply_msg (req_template, priv);
+
+  req = priv->current_req;
   
   snprintf (req->extra_hdrs, sizeof(req->extra_hdrs), "Content-length: %d\r\n", req->contents_len);
-  req->extra_hdrs_len = strlen (req->extra_hdrs);
-  
-  method_str = call_method_name[req->method];
-  call_set_method (call, method_str, strlen (method_str));
-  call_set_uri (call, req->uri, req->uri_len);
-  
+  req->extra_hdrs_len = strlen (req->extra_hdrs);    
+
+  if (req->status_len > 0)
+  {
+      call_setup_response(call);
+      call_set_status_code (call, req->status, req->status_len);
+  }
+  else
+  {
+      call_setup_request(call);
+      method_str = call_method_name[req->method];
+      call_set_method (call, method_str, strlen (method_str));
+      call_set_uri (call, req->uri, req->uri_len);
+  }
+
+  if (req->add_hdrs_len > 0)
+  {
+      call_append_request_header (call, req->add_hdrs,
+  			      req->add_hdrs_len);
+  }    
+
   /* add "Content-length:" header and contents, if necessary: */
   call_append_request_header (call, req->extra_hdrs,
-  			      req->extra_hdrs_len);
-  call_set_contents (call, req->contents, req->contents_len);
+       			          req->extra_hdrs_len);
+  
+  if (req->contents_len > 0)
+  {            
+      call_set_contents (call, req->contents, req->contents_len);
+  }  
  
   if (DBG > 0)
       fprintf (stderr, "%s: accessing URI `%s'\n", prog_name, req->uri);
   
   retval = session_issue_call (sess, call);
-  
-  call_dec_ref (call);
+
+  if (!req->noreply)
+      call_dec_ref (call);
   
   if (retval < 0)
       return;
+}
+
+/* Create a new session and fill in our private information.  */
+static int
+sess_create (Conn *conn, const char *serial, int template_id)
+{ 
+  int ret, serial_len, cpe_idx;
+  struct sockaddr_in peeraddr;
+  socklen_t peeraddrlen = sizeof(peeraddr);
+  Cwmp_Sess_Private_Data *priv, *template;
+  Sess *sess;  
+
+  if (param.max_sess != 0 && num_active_sess >= param.max_sess)
+  {
+     return 0;
+  }
+
+  sess = sess_new ();
+
+  num_active_sess++;
+  cwmp_num_sessions_generated++;
+
+  priv = CWMP_SESS_PRIVATE_DATA (sess);
+
+  priv->current_sess_template = template_id;
+  template = &session_templates[priv->current_sess_template];
+
+  priv->current_burst = template->current_burst;
+  priv->total_num_reqs = template->total_num_reqs;
+  priv->num_calls_target = template->current_burst->num_reqs;
+  
+  priv->current_req = (REQ *) malloc (sizeof(REQ));
+  if (NULL == priv->current_req)
+  {
+     fprintf (stderr, "not enough emeory to allocate\n");
+     return -1;
+  }
+  memset (priv->current_req, 0x0, sizeof(REQ));
+ 
+  if (serial)
+  {
+    priv->serial = strdup (serial);
+  }
+  else
+  {
+    serial_len = strlen(param.cwmp.serial_prefix) + CWMP_MAX_CPE_DIGIT_NUMBER + 1;
+    priv->serial = malloc (serial_len);
+    if (NULL == priv->serial)
+    {
+          fprintf (stderr, "Not enough memory.\n");
+          return -1;
+    }
+    
+    cpe_idx = CWMP_LISTEN_PORT_TO_INDEX (conn->myport);
+
+    ret = snprintf (priv->serial, serial_len, CWMP_SERIAL_STR,
+                    param.cwmp.serial_prefix, CWMP_MAX_CPE_DIGIT_NUMBER,
+                    cpe_idx);
+    if (ret >= serial_len)
+    {
+       fprintf (stderr, "snprintf was truncated.\n");
+       return -1;
+    }
+  }
+  
+  if (DBG > 0)
+    fprintf (stderr, "Starting session, first burst_len = %d\n",
+	     priv->num_calls_target);
+
+  issue_calls (sess, priv, conn);
+  
+  return 0;
+}
+
+static void
+sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
+{
+  Cwmp_Sess_Private_Data *priv;
+  Sess *sess;
+
+  assert (et == EV_SESS_DESTROYED && object_is_sess (obj));
+  sess = (Sess *) obj;  
+
+  priv = CWMP_SESS_PRIVATE_DATA (sess);
+  if (priv->timer)
+    {
+      timer_cancel (priv->timer);
+      priv->timer = 0;
+    }
+
+  num_active_sess--;
+
+  if (++priv->current_sess_template < num_templates)
+  {  
+    sess_create (NULL, priv->serial, priv->current_sess_template);
+  }
+  else
+  {
+     fprintf (stderr, "Finish connection request for %s\n", priv->serial);
+  }
+
+  /* FIXME */
+  if (priv->current_req->contents != NULL)
+  {
+    free (priv->current_req->contents);
+    priv->current_req->contents = NULL;
+  }
+  
+  
+  if (priv->current_req != NULL)
+  {
+    free (priv->current_req);
+    priv->current_req = NULL;
+  }     
+
+  if (priv->serial != NULL)
+  {
+    free (priv->serial);
+    priv->serial = NULL;
+  }
+}
+
+static void
+sess_failed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
+{
+  Cwmp_Sess_Private_Data *priv;
+  Sess *sess;
+
+  assert (et == EV_SESS_FAILED && object_is_sess (obj));
+  sess = (Sess *) obj;
+
+  priv = CWMP_SESS_PRIVATE_DATA (sess);
+  priv->cwmp_result = CWMP_ERR_NO_RESP;
 }
 
 static void
@@ -329,8 +494,6 @@ call_recv_data (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 
   if (NULL != strstr(cp, "<cwmp:InformResponse>"))
   {
-        priv->trans_seq++;
-        
         if (priv->current_cpe_action > CPE_INFORM_DONE)
         {
             priv->num_calls_destroyed = priv->total_num_reqs;
@@ -341,8 +504,6 @@ call_recv_data (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   }
   else if (NULL != strstr(cp, "<cwmp:GetParameterNames>"))
   {
-        priv->trans_seq++;
-        cwmp_get_cwmpID (cp, priv);
         if (priv->current_cpe_action > CPE_REP_ALL_PARAM_NAME)
         {
             priv->num_calls_destroyed = priv->total_num_reqs;
@@ -353,9 +514,14 @@ call_recv_data (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   }
   else if (NULL != strstr(cp, "<cwmp:GetParameterValues>"))
   {
-        priv->trans_seq++;
         priv->current_cpe_action = CPE_REP_ALL_PARAM_VALUE;
-  }  
+  }
+  else
+  {
+        return;
+  }
+
+  cwmp_get_cwmpID (cp, priv);
 }
 
 static void
@@ -371,7 +537,7 @@ call_recv_start (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   assert (et == EV_CALL_RECV_START && object_is_call (obj));
   call = (Call *) obj;
   sess = session_get_sess_from_call (call);
-  priv = CWMP_SESS_PRIVATE_DATA (sess);  
+  priv = CWMP_SESS_PRIVATE_DATA (sess);
 
   buf = call->conn->line.iov_base;
   
@@ -386,7 +552,7 @@ call_recv_start (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
     }
     else if (204 == status) /* No Content */
     {
-        if (priv->trans_seq == session_templates.current_burst->num_reqs)
+        if (priv->num_calls_destroyed == (priv->num_calls_in_this_burst - 1))
         {
             priv->cwmp_result = CWMP_ERR_NONE;
         }
@@ -415,87 +581,8 @@ user_think_time_expired (struct Timer *t, Any_Type arg)
 
   priv = CWMP_SESS_PRIVATE_DATA (sess);
   priv->timer = 0;
-  issue_calls (sess, priv);
-}
 
-/* Create a new session and fill in our private information.  */
-static int
-sess_create (Any_Type arg)
-{ 
-  static int first_time, cpe_idx;
-  int ret, serial_len;
-  Cwmp_Sess_Private_Data *priv;
-  Sess *sess;
-
-  if (0 == first_time)
-  {
-     first_time++;
-     sess_time_start = timer_now();
-  }
-
-  if (param.max_sess != 0 && num_active_sess >= param.max_sess)
-  {
-     return 0;
-  }
-
-  if (cpe_idx >= param.cwmp.num_sessions)
-  {
-     if (param.forever)
-     {
-        cpe_idx = 0;
-     }
-     else
-     {        
-        return -1;
-     }
-  }
-
-  sess = sess_new ();
-
-  num_active_sess++;
-  if (++cwmp_num_sessions_generated == param.cwmp.num_sessions)
-  {
-     sess_time_stop = timer_now();
-  }
-
-  priv = CWMP_SESS_PRIVATE_DATA (sess);
-  priv->current_burst = session_templates.current_burst;
-  priv->total_num_reqs = session_templates.total_num_reqs;
-  priv->num_calls_target = session_templates.current_burst->num_reqs;
-  
-  priv->current_req = (REQ *) malloc (sizeof(REQ));
-  if (NULL == priv->current_req)
-  {
-     fprintf (stderr, "not enough emeory to allocate\n");
-     return -1;
-  }
-  memset (priv->current_req, 0x0, sizeof(REQ));
-
-  serial_len = strlen(param.cwmp.serial_prefix) + CWMP_MAX_CPE_DIGIT_NUMBER + 1;
-  priv->serial = malloc (serial_len);
-  if (NULL == priv->serial)
-  {
-        fprintf (stderr, "Not enough memory.\n");
-        return -1;
-  }
-
-  ret = snprintf (priv->serial, serial_len, CWMP_SERIAL_STR,
-                  param.cwmp.serial_prefix, CWMP_MAX_CPE_DIGIT_NUMBER,
-                  ++cpe_idx);
-  if (ret >= serial_len)
-  {
-     fprintf (stderr, "snprintf was truncated.\n");
-     return -1;
-  }
-  
-  priv->trans_seq = 1;
-  
-  if (DBG > 0)
-    fprintf (stderr, "Starting session, first burst_len = %d\n",
-	     priv->num_calls_target);
-
-  issue_calls (sess, priv);
-  return 0;
+  issue_calls (sess, priv, NULL);
 }
 
 static void
@@ -535,7 +622,7 @@ call_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   assert (et == EV_CALL_DESTROYED && object_is_call (obj));
   call = (Call *) obj;
   sess = session_get_sess_from_call (call);
-  priv = CWMP_SESS_PRIVATE_DATA (sess);
+  priv = CWMP_SESS_PRIVATE_DATA (sess);  
 
   if (sess->failed)
     return;
@@ -546,7 +633,7 @@ call_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
     /* we're done with this session */
     sess_dec_ref (sess);
   else if (priv->num_calls_in_this_burst < priv->current_burst->num_reqs)
-    issue_calls (sess, priv);
+    issue_calls (sess, priv, NULL);
   else if (priv->num_calls_destroyed >= priv->num_calls_target)
     prepare_for_next_burst (sess, priv);
 }
@@ -599,8 +686,10 @@ parse_config (void)
   char method_str[1000];
   char this_arg[500000]; 
   char contents[500000];
+  char headers[500000];
+  char status_code[1024];
   double think_time;
-  int bytes_read;
+  int bytes_read, noreply;
   REQ *reqptr;
   BURST *bptr, *current_burst = 0;
   char *from, *to, *parsed_so_far;
@@ -612,7 +701,8 @@ parse_config (void)
   if (fp == NULL)
     panic ("%s: can't open %s\n", prog_name, param.cwmp.file);  
 
-  sptr = &session_templates;
+  num_templates = 0;
+  sptr = &session_templates[0];
 
   for (lineno = 1; fgets (line, sizeof (line), fp); lineno++)
     {
@@ -631,6 +721,10 @@ parse_config (void)
 
       if (sptr->current_req == NULL)
 	{
+          num_templates++;
+	  if (num_templates > MAX_SESSION_TEMPLATES)
+	    panic ("%s: too many sessions (%d) specified in %s\n",
+		   prog_name, num_templates, param.wsesslog.file); 
 	  current_burst = sptr->current_burst = new_burst (reqptr);
 	}
       else
@@ -668,6 +762,143 @@ parse_config (void)
 	    }
 	  else if (sscanf (this_arg, "think=%lf", &think_time) == 1)
 	    current_burst->user_think_time = think_time;
+          else if (sscanf (this_arg, "status=%s", status_code) == 1)
+	    {
+              if (status_code[0] == '"')
+              {
+                status_code[0] = ' ';
+              }
+              else
+              {
+                panic ("%s: did not recognize status '%s' in %s\n",
+		       prog_name, status_code, param.cwmp.file);
+              }
+
+              from = strchr (parsed_so_far, '=') + 1;              
+	      to = status_code;
+              double_quoted = FALSE;
+              done = FALSE;
+
+	      while ((ch = *from++) != '\0' && !done)
+	      {
+                if (ch == '"' && double_quoted)
+                {
+                   double_quoted = FALSE;
+                }
+                else if (ch == '"')
+                {
+                   *to++ = ' ';
+                   double_quoted = TRUE;
+                }
+                else if (ch == ' ' && double_quoted == FALSE)
+                {
+                   break;
+                }
+                else
+                {
+                  *to++ = ch;
+                }
+	      }              
+
+              *to = '\0';
+              from--;
+	      bytes_read = from - parsed_so_far;
+              
+              sptr->current_req->status_len = strlen (status_code);
+              sptr->current_req->status = strdup (status_code);
+	    }
+          else if (sscanf (this_arg, "add-header=%s", headers) == 1)
+	    {
+	      /* this is tricky since contents might be a quoted
+		 string with embedded spaces or escaped quotes.  We
+		 should parse this carefully from parsed_so_far */
+	      from = strchr (parsed_so_far, '=') + 1;
+	      to = headers;
+	      single_quoted = FALSE;
+	      double_quoted = FALSE;
+	      escaped = FALSE;
+	      done = FALSE;
+	      while ((ch = *from++) != '\0' && !done)
+		{
+		  if (escaped == TRUE)
+		    {
+		      switch (ch)
+			{
+			case 'n':
+			  *to++ = '\n';
+			  break;
+			case 'r':
+			  *to++ = '\r';
+			  break;
+			case 't':
+			  *to++ = '\t';
+			  break;
+			case '\n':
+			  *to++ = '\n';
+			  /* this allows an escaped newline to
+			     continue the parsing to the next line. */
+			  if (fgets(line,sizeof(line),fp) == NULL)
+			    {
+			      lineno++;
+			      panic ("%s: premature EOF seen in '%s'\n",
+				     prog_name, param.cwmp.file);  
+			    }
+			  parsed_so_far = from = line;
+			  break;
+			default:
+			  *to++ = ch;
+			  break;
+			}
+		      escaped = FALSE;
+		    }
+		  else if (ch == '"' && double_quoted)
+		    {
+		      double_quoted = FALSE;
+		    }
+		  else if (ch == '\'' && single_quoted)
+		    {
+		      single_quoted = FALSE;
+		    }
+		  else
+		    {
+		      switch (ch)
+			{
+			case '\t':
+			case '\n':
+			case ' ':
+			  if (single_quoted == FALSE &&
+			      double_quoted == FALSE)
+			    done = TRUE;	/* we are done */
+			  else
+			    *to++ = ch;
+			  break;
+			case '\\':		/* backslash */
+			  escaped = TRUE;
+			  break;
+			case '"':		/* double quote */
+			  if (single_quoted)
+			    *to++ = ch;
+			  else
+			    double_quoted = TRUE;
+			  break;
+			case '\'':		/* single quote */
+			  if (double_quoted)
+			    *to++ = ch;
+			  else
+			    single_quoted = TRUE;
+			  break;
+			default:
+			  *to++ = ch;
+			  break;
+			}
+		    }
+		}
+	      *to = '\0';
+	      from--;		/* back up 'from' to '\0' or white-space */
+	      bytes_read = from - parsed_so_far;
+              sptr->current_req->add_hdrs_len = strlen (headers);
+              sptr->current_req->add_hdrs = strdup (headers);
+	    }
 	  else if (sscanf (this_arg, "contents=%s", contents) == 1)
 	    {
 	      /* this is tricky since contents might be a quoted
@@ -756,10 +987,12 @@ parse_config (void)
 		}
 	      *to = '\0';
 	      from--;		/* back up 'from' to '\0' or white-space */
-	      bytes_read = from - parsed_so_far;	      
+	      bytes_read = from - parsed_so_far;
               sptr->current_req->contents_len = strlen (contents);
               sptr->current_req->contents = strdup (contents);
 	    }
+          else if (sscanf (this_arg, "noreply=%d", &noreply) == 1)
+	    sptr->current_req->noreply = noreply;
 	  else
 	    {
 	      /* do not recognize this arg */
@@ -769,7 +1002,43 @@ parse_config (void)
 	  parsed_so_far += bytes_read;
 	}
     }
+  
   fclose (fp);
+}
+
+static void
+conn_request (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
+{
+  Conn *conn;
+  
+  assert (et == EV_CONN_REQ && object_is_conn (obj));
+
+  conn = (Conn *) obj;
+
+  fprintf (stderr, "Get connection request for %s%07d\n", param.cwmp.serial_prefix, CWMP_LISTEN_PORT_TO_INDEX (conn->myport));
+
+  sess_create(conn, NULL, 0);
+}
+
+static void
+send_stop(Event_Type et, Object * obj, Any_Type reg_arg, Any_Type call_arg)
+{
+  Cwmp_Sess_Private_Data *priv;
+  Sess *sess;
+  Call *call;
+  Any_Type arg;
+
+  assert(et == EV_CALL_SEND_STOP && object_is_call(obj));
+
+  call = (Call *) obj;
+  sess = session_get_sess_from_call (call);
+  priv = CWMP_SESS_PRIVATE_DATA (sess);
+
+  if (priv->current_req->noreply)
+  { 
+    arg.l = 204;
+    event_signal (EV_CALL_DESTROYED, (Object *) obj, arg);
+  }
 }
 
 static void
@@ -782,16 +1051,14 @@ init (void)
   cwmp_sess_private_data_offset = object_expand (OBJ_SESS,
 					    sizeof (Cwmp_Sess_Private_Data));
 
-  rg_cwmp.rate = &param.rate;
-  rg_cwmp.tick = sess_create;
-  rg_cwmp.arg.l = 0;
-
   arg.l = 0;
   event_register_handler (EV_SESS_DESTROYED, sess_destroyed, arg);
   event_register_handler (EV_CALL_DESTROYED, call_destroyed, arg);
   event_register_handler (EV_CALL_RECV_DATA, call_recv_data, arg);
   event_register_handler (EV_CALL_RECV_START, call_recv_start, arg);
   event_register_handler (EV_SESS_FAILED, sess_failed, arg);
+  event_register_handler (EV_CONN_REQ, conn_request, arg);
+  event_register_handler (EV_CALL_SEND_STOP, send_stop, arg);
 
   /* This must come last so the session event handlers are executed
      before this module's handlers.  */
@@ -801,7 +1068,12 @@ init (void)
 static void
 start (void)
 {
-  rate_generator_start (&rg_cwmp, EV_SESS_DESTROYED);
+  static int cpe_idx;
+
+  while (++cpe_idx <= param.cwmp.num_sessions)
+  {
+    core_listen (CWMP_INDEX_TO_LISTEN_PORT(cpe_idx));
+  }
 }
 
 Load_Generator cwmp =
@@ -811,3 +1083,4 @@ Load_Generator cwmp =
     start,
     no_op
   };
+

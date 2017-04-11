@@ -120,10 +120,17 @@ parse_status_line (Call *c, char **bufp, size_t *buf_lenp)
   s->content_length = ~(size_t) 0;
 
   if (!get_line (c, bufp, buf_lenp))
-    return;
+    return;  
 
   buf = c->conn->line.iov_base;
-  if (sscanf (buf, "HTTP/%u.%u %u ", &major, &minor, &status) == 3)
+
+  /* FIXME */
+  if ((buf[0] == 'G' || buf[0] == 'P') &&
+       sscanf (buf, "%*s %*s HTTP/%u.%u", &major, &minor) == 2)
+  {
+     c->reply.version = 0x10000*major + minor;
+  }
+  else if (sscanf (buf, "HTTP/%u.%u %u ", &major, &minor, &status) == 3)
     {
       c->reply.version = 0x10000*major + minor;
       c->reply.status = status;
@@ -146,7 +153,8 @@ parse_status_line (Call *c, char **bufp, size_t *buf_lenp)
      never includes an entity.  For other methods, things depend on
      the status code.  */
 
-  if (strcmp ((char *) c->req.iov[IE_METHOD].iov_base, "HEAD") == 0)
+  if (c->req.iov[IE_METHOD].iov_len == 0 ||
+      strcmp ((char *) c->req.iov[IE_METHOD].iov_base, "HEAD") == 0)
     s->has_body = 0;
   else
     {

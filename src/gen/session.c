@@ -127,6 +127,61 @@ static size_t call_private_data_offset = -1;
 static size_t max_qlen;
 
 static void
+inherit_conn (Sess *sess, struct Conn_Info *ci, Conn *conn)
+{
+  Conn_Private_Data *cpriv;
+  extern Conn **sd_to_conn;
+  extern int alloced_sd_to_conn;
+
+  /* No connection yet (or anymore).  Create a new connection.  Note
+     that CI->CONN is NOT reference-counted.  This is again to avoid
+     introducing recursive dependencies (see also comment regarding
+     member CONN in call.h). */
+  ci->conn = conn;
+  
+  cpriv = CONN_PRIVATE_DATA (conn);
+  cpriv->sess = sess;
+  cpriv->ci = ci;
+
+  ci->is_connected = 1;
+  ci->is_successful = 0;
+  ci->num_sent = 0;		/* (re-)send all pending calls */
+
+#ifdef HAVE_SSL
+  if (param.ssl_reuse && conn->ssl && sess->ssl)
+    {
+      if (DBG > 0)
+	fprintf (stderr, "create_conn: reusing SSL session %p\n",
+		 (void *) sess->ssl);
+      SSL_copy_session_id (conn->ssl, sess->ssl);
+    }
+#endif
+  
+  if (conn->sd >= alloced_sd_to_conn) {
+  	size_t          size, old_size;
+  
+  	old_size = alloced_sd_to_conn * sizeof(sd_to_conn[0]);
+  	alloced_sd_to_conn += 2048;
+  	size = alloced_sd_to_conn * sizeof(sd_to_conn[0]);
+  	if (sd_to_conn)
+  		sd_to_conn = realloc(sd_to_conn, size);
+  	else
+  		sd_to_conn = malloc(size);
+  	if (!sd_to_conn) {
+  		if (DBG > 0)
+  			fprintf(stderr,
+  				"%s.core_connect.realloc: %s\n",
+  				prog_name, strerror(errno));
+  		sess_failure (sess);
+                return;
+  	}
+  	memset((char *) sd_to_conn + old_size, 0, size - old_size);
+  }
+  assert(!sd_to_conn[conn->sd]);
+  sd_to_conn[conn->sd] = conn;
+}
+
+static void
 create_conn (Sess *sess, struct Conn_Info *ci)
 {
   Conn_Private_Data *cpriv;
@@ -168,18 +223,29 @@ send_calls (Sess *sess, struct Conn_Info *ci)
 {
   u_int rd;
   int i;
+  Call *call;
+
+  rd = (ci->rd + ci->num_sent) % MAX_PIPED;
+
+  call = ci->call[rd];
 
   if (!ci->conn)
     {
-      create_conn (sess, ci);
-      return;
+        /* Inherit connection */
+        if (call->conn)
+        {
+            inherit_conn (sess, ci, call->conn);
+        }
+        else
+        {
+            create_conn (sess, ci);
+            return;
+        }
     }
 
   if (!ci->is_connected)
     /* wait until connection is connected (or has failed)  */
-    return;
-
-  rd = (ci->rd + ci->num_sent) % MAX_PIPED;
+    return;  
 
   for (i = ci->num_sent; i < ci->num_pending; ++i)
     {
@@ -418,6 +484,7 @@ session_issue_call (Sess *sess, Call *call)
 
   for (i = 0; i < param.max_conns; ++i)
     {
+     
       ci = priv->conn_info + i;
       if (ci->num_pending < param.max_piped)
 	{
@@ -448,3 +515,4 @@ session_get_sess_from_call (Call *call)
   assert (object_is_call (call));
   return CALL_PRIVATE_DATA (call)->sess;
 }
+

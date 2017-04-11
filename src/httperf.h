@@ -190,8 +190,6 @@ extern int periodic_stats;
 extern Cmdline_Params param;
 extern Time test_time_start;
 extern Time test_time_stop;
-extern Time sess_time_start;
-extern Time sess_time_stop;
 extern struct rusage test_rusage_start;
 extern struct rusage test_rusage_stop;
 

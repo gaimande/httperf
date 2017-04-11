@@ -50,8 +50,8 @@ call_init (Call *c)
   c->id = next_id++;
   call_set_method (c, DEFAULT_METHOD, sizeof (DEFAULT_METHOD) - 1);
   c->req.version = param.http_version;
-  c->req.iov[IE_BLANK].iov_base = (caddr_t) " ";
-  c->req.iov[IE_BLANK].iov_len = 1;
+  c->req.iov[IE_BLANK1].iov_base = (caddr_t) " ";
+  c->req.iov[IE_BLANK1].iov_len = 1;
   c->req.iov[IE_NEWLINE1].iov_base = (caddr_t) "\r\n";
   c->req.iov[IE_NEWLINE1].iov_len = 2;
   c->req.iov[IE_NEWLINE2].iov_base = (caddr_t) "\r\n";
