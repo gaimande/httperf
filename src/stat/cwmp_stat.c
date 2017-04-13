@@ -96,6 +96,9 @@ Cwmp_Stat_Sess_Private_Data;
 static size_t cwmp_stat_sess_private_data_offset = -1;
 extern size_t cwmp_sess_private_data_offset;
 extern u_int cwmp_num_sessions_generated;
+extern u_int cwmp_conn_req_sessions;
+extern Time cwmp_test_time_start;
+extern Time cwmp_test_time_stop;
 
 static unsigned int 
 get_screen_width (void)
@@ -315,11 +318,11 @@ dump (void)
 {
   double min, avg, stddev, delta;
   int i;
-  time_t start_t = (time_t)test_time_start;
-  time_t stop_t = (time_t)test_time_stop;
+  time_t start_t = (time_t)cwmp_test_time_start;
+  time_t stop_t = (time_t)cwmp_test_time_stop;
   char start_s[20], stop_s[20];
 
-  delta = test_time_stop - test_time_start;
+  delta = cwmp_test_time_stop - cwmp_test_time_start;
 
   putchar ('\n');
 
@@ -346,6 +349,9 @@ dump (void)
   if (st.num_succeeded > 0)
     avg = st.lifetime_sum/st.num_succeeded;
   printf ("Cwmp session lifetime [s]: %.1f\n", avg);
+
+  printf ("Cwmp connection request [req]: %d\n",
+          cwmp_conn_req_sessions);
 
   avg = st.num_succeeded * 100 / (double) cwmp_num_sessions_generated;
   printf ("Cwmp session succeeded [sess]: total %d (%.1f%%)\n",

@@ -68,12 +68,16 @@
 #define CWMP_MAX_CPE_DIGIT_NUMBER       7           /* Maximum milion devices */
 #define CWMP_SERIAL_STR                 "%s%0*d"
 
-#define CWMP_INDEX_TO_LISTEN_PORT(_I_)  (2000 + _I_)
-#define CWMP_LISTEN_PORT_TO_INDEX(_I_)  (_I_ - 2000)
+#define CWMP_INDEX_TO_LISTEN_PORT(_I_)  (10000 + _I_)
+#define CWMP_LISTEN_PORT_TO_INDEX(_I_)  (_I_ - 10000)
 
 size_t cwmp_sess_private_data_offset;
 u_int cwmp_num_sessions_generated;
+u_int cwmp_conn_req_sessions;
 static int num_active_sess;
+
+Time cwmp_test_time_start;
+Time cwmp_test_time_stop;
 
 /* This is an array rather than a list because we may want different
    httperf clients to start at different places in the sequence of
@@ -438,6 +442,7 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   }
   else
   {
+     cwmp_test_time_stop = timer_now();
      fprintf (stderr, "Finish connection request for %s\n", priv->serial);
   }
 
@@ -1010,11 +1015,19 @@ static void
 conn_request (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 {
   Conn *conn;
+  static int first;
   
   assert (et == EV_CONN_REQ && object_is_conn (obj));
 
   conn = (Conn *) obj;
 
+  if (0 == first)
+  {
+      first = 1;
+      cwmp_test_time_start = timer_now();
+  }
+
+  cwmp_conn_req_sessions++;
   fprintf (stderr, "Get connection request for %s%07d\n", param.cwmp.serial_prefix, CWMP_LISTEN_PORT_TO_INDEX (conn->myport));
 
   sess_create(conn, NULL, 0);
@@ -1033,7 +1046,7 @@ send_stop(Event_Type et, Object * obj, Any_Type reg_arg, Any_Type call_arg)
   call = (Call *) obj;
   sess = session_get_sess_from_call (call);
   priv = CWMP_SESS_PRIVATE_DATA (sess);
-
+  
   if (priv->current_req->noreply)
   { 
     arg.l = 204;

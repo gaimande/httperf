@@ -434,7 +434,7 @@ set_active(Conn * s, enum IO_DIR dir)
 		exit(1);
 	}
 #elif defined HAVE_POLL
-        if (sd >= alloced_pfds)
+        while (sd >= alloced_pfds)
         {
                 size_t size, old_size;
 
@@ -1250,7 +1250,7 @@ core_connect(Conn * s)
 
 	s->sd = sd;
 #ifndef HAVE_KEVENT
-	if (sd >= alloced_sd_to_conn) {
+	while (sd >= alloced_sd_to_conn) {
 		size_t          size, old_size;
 
 		old_size = alloced_sd_to_conn * sizeof(sd_to_conn[0]);
@@ -1899,7 +1899,7 @@ core_listen (int port)
         goto failure;
     }
 
-    if (sd >= alloced_pfds)
+    while (sd >= alloced_pfds)
     {
         size_t size, old_size;
 

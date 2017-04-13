@@ -157,7 +157,8 @@ inherit_conn (Sess *sess, struct Conn_Info *ci, Conn *conn)
     }
 #endif
   
-  if (conn->sd >= alloced_sd_to_conn) {
+  while (conn->sd >= alloced_sd_to_conn)
+  {
   	size_t          size, old_size;
   
   	old_size = alloced_sd_to_conn * sizeof(sd_to_conn[0]);
@@ -170,8 +171,7 @@ inherit_conn (Sess *sess, struct Conn_Info *ci, Conn *conn)
   	if (!sd_to_conn) {
   		if (DBG > 0)
   			fprintf(stderr,
-  				"%s.core_connect.realloc: %s\n",
-  				prog_name, strerror(errno));
+  				"%s.core_connect.realloc\n", prog_name);
   		sess_failure (sess);
                 return;
   	}
