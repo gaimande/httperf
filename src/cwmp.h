@@ -57,6 +57,7 @@ typedef struct Cwmp_Sess_Private_Data
     int current_cpe_action;    
     char *cwmpID;
     char *serial;
+    int cpe_port;
     int current_sess_template;
   } Cwmp_Sess_Private_Data;
 

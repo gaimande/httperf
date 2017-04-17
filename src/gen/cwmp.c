@@ -88,6 +88,108 @@ static Cwmp_Sess_Private_Data session_templates[MAX_SESSION_TEMPLATES] =
     { 0, }
   };
 
+static void printchar(char **str, int size, int curr_size, int c)
+{   
+    **str = c;
+    if (curr_size < (size - 1))
+        ++(*str);
+}
+
+static int prints(char **out, int size, int curr_size, const char *string)
+{   
+    int cnt = 0;
+    
+    for ( ; *string ; ++string)
+    {   
+        printchar (out, size, ++curr_size, *string);
+        cnt++;
+    }
+    
+    return cnt;
+}
+
+/* the following should be enough for 32 bit int */
+#define PRINT_BUF_LEN 12
+
+static int printi(char **out, int size, int curr_size, int i)
+{
+    char print_buf[PRINT_BUF_LEN];
+    char *s; 
+    int t, pc = 0;
+    unsigned int u = i;
+    int letbase = 'a';
+
+    if (i == 0) {
+        print_buf[0] = '0';
+        print_buf[1] = '\0';
+        return prints (out, size, curr_size, print_buf);
+    }   
+
+    s = print_buf + PRINT_BUF_LEN-1;
+    *s = '\0';
+
+    while (u) {
+        t = u % 10; 
+        if( t >= 10 )
+            t += letbase - '0' - 10; 
+        *--s = t + '0';
+        u /= 10; 
+    }   
+
+    return pc + prints (out, size, curr_size, s); 
+}
+
+int cwmp_snprintf (char *outFile, int size, const char *format, Cwmp_Sess_Private_Data *priv)
+{   
+    char **out = &outFile;
+    char *buf = format;
+    int cnt = 0;
+
+    if (NULL == format || NULL == outFile || NULL == priv)
+    {
+        return -1;
+    }
+    
+    for (; *buf != 0; buf++)
+    {   
+        if (*buf == '%')
+        {   
+            buf++;
+            if (*buf == '\0')
+                break;
+            
+            if (*buf == '%')
+            {   
+                printchar (out, size, cnt, *buf);
+                cnt++;
+            }
+            else if (*buf == 's')
+            {   
+                cnt += prints (out, size, cnt, priv->serial ? priv->serial : "(NULL)");
+                continue;
+            }
+            else if (*buf == 'i')
+            {   
+                cnt += prints (out, size, cnt, priv->cwmpID ? priv->cwmpID : "(NULL)");
+                continue;
+            }            
+            else if (*buf == 'p')
+            {
+                cnt += printi (out, size, cnt, priv->cpe_port);
+            }
+        }
+        else
+        {   
+            printchar (out, size, cnt, *buf);
+            cnt++;
+        }
+    }
+
+    if (out) **out = '\0';
+
+    return cnt;
+}
+
 static int
 get_cpe_idx_from_serial (const char *serial)
 {
@@ -138,16 +240,9 @@ cwmp_get_cwmpID (const char *msg, Cwmp_Sess_Private_Data *priv)
 static int
 cwmp_build_reply_msg (const REQ *template, Cwmp_Sess_Private_Data *priv)
 {
-    int len = 0;
-    int ret = 0;
-    int str_replace = 0;
-    int num_replace = 0;
-    int cpe_idx, cpe_port;
-    int digit_cnt = 0;
-    char *req_template_content = template->contents;
-    const char* str_pattern_replace = "%s";
-    const char* num_pattern_replace = "%d";
-    char cpe_port_str[16] = {0};
+    int ret;
+    char buf[500000];
+    int buf_len = sizeof(buf);
 
     /* Use a random cwmpID for the first message */
     if (NULL == priv->cwmpID)
@@ -161,65 +256,32 @@ cwmp_build_reply_msg (const REQ *template, Cwmp_Sess_Private_Data *priv)
         priv->current_req->contents = NULL;
     }
 
-    if (req_template_content != NULL)
+    if (priv->current_req->uri != NULL)
     {
-        cpe_idx = get_cpe_idx_from_serial (priv->serial);
-        cpe_port = CWMP_INDEX_TO_LISTEN_PORT (cpe_idx);
-        while (cpe_port)
-        {
-            cpe_port = cpe_port / 10;
-            digit_cnt++;
-        }
-        
-        while (NULL != (req_template_content = strstr(req_template_content, str_pattern_replace)))
-        {
-            str_replace++;
-            req_template_content += strlen(str_pattern_replace);
-        }
-
-        req_template_content = template->contents;
-        while (NULL != (req_template_content = strstr(req_template_content, num_pattern_replace)))
-        {
-            num_replace++;
-            req_template_content += strlen(num_pattern_replace);
-        }
+        free(priv->current_req->uri);
+        priv->current_req->uri = NULL;
+    }   
     
-        if (str_replace > 0)
-        {
-            len = sizeof(char) * (template->contents_len + strlen(priv->cwmpID) +
-                  (str_replace - 1) * strlen(priv->serial) - str_replace * strlen(str_pattern_replace));
-
-            len += num_replace * digit_cnt;
+    /* Build content */
+    memset (buf, 0x0, buf_len);  
     
-            priv->current_req->contents = calloc(1, len + 1);
-            if (NULL == priv->current_req->contents)
-            {
-                fprintf (stderr, "not enough memory to allocate\n");
-                return -1;
-            }
-            
-            ret = snprintf (priv->current_req->contents, len + 1, template->contents, 
-                            priv->cwmpID, priv->serial, priv->serial,
-                            CWMP_INDEX_TO_LISTEN_PORT (cpe_idx));
-            if (ret > len)
-            {
-                fprintf (stderr, "snprintf error\n");
-                return -1;
-            }
-        }
-        else
-        {
-            len = template->contents_len;
-            priv->current_req->contents = strndup (template->contents, len);
-            if (NULL == priv->current_req->contents)
-            {
-                fprintf (stderr, "not enough memory to allocate\n");
-                return -1;
-            }
-        }
+    ret = cwmp_snprintf (buf, buf_len, template->contents, priv);
+    if (ret >= buf_len)
+    {
+        fprintf (stderr, "cwmp_snprintf error, output was truncated\n");
+        return -1;
+    }
+    else if (ret < 0)
+    {
+        priv->current_req->contents = NULL;
+        priv->current_req->contents_len = 0;
+    }
+    else
+    {
+        priv->current_req->contents = strdup (buf);
+        priv->current_req->contents_len = strlen (buf);
     }
     
-    priv->current_req->contents_len = len;
     priv->current_req->method = template->method;
     priv->current_req->uri = template->uri;
     priv->current_req->uri_len = template->uri_len;
@@ -348,7 +410,7 @@ issue_calls (Sess *sess, Cwmp_Sess_Private_Data *priv, Conn *conn)
 
 /* Create a new session and fill in our private information.  */
 static int
-sess_create (Conn *conn, const char *serial, int template_id)
+sess_create (Conn *conn, Cwmp_Sess_Private_Data *o_priv)
 { 
   int ret, serial_len, cpe_idx;
   struct sockaddr_in peeraddr;
@@ -368,7 +430,7 @@ sess_create (Conn *conn, const char *serial, int template_id)
 
   priv = CWMP_SESS_PRIVATE_DATA (sess);
 
-  priv->current_sess_template = template_id;
+  priv->current_sess_template = o_priv ? o_priv->current_sess_template : 0;
   template = &session_templates[priv->current_sess_template];
 
   priv->current_burst = template->current_burst;
@@ -383,12 +445,15 @@ sess_create (Conn *conn, const char *serial, int template_id)
   }
   memset (priv->current_req, 0x0, sizeof(REQ));
  
-  if (serial)
+  if (o_priv)
   {
-    priv->serial = strdup (serial);
+    priv->serial = strdup (o_priv->serial);
+    priv->cpe_port = o_priv->cpe_port;
   }
   else
   {
+    priv->cpe_port = conn->myport;
+    
     serial_len = strlen(param.cwmp.serial_prefix) + CWMP_MAX_CPE_DIGIT_NUMBER + 1;
     priv->serial = malloc (serial_len);
     if (NULL == priv->serial)
@@ -438,7 +503,7 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 
   if (++priv->current_sess_template < num_templates)
   {  
-    sess_create (NULL, priv->serial, priv->current_sess_template);
+    sess_create (NULL, priv);
   }
   else
   {
@@ -1030,7 +1095,7 @@ conn_request (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   cwmp_conn_req_sessions++;
   fprintf (stderr, "Get connection request for %s%07d\n", param.cwmp.serial_prefix, CWMP_LISTEN_PORT_TO_INDEX (conn->myport));
 
-  sess_create(conn, NULL, 0);
+  sess_create(conn, NULL);
 }
 
 static void
