@@ -49,10 +49,10 @@ typedef struct Cwmp_Sess_Private_Data
 
     BURST *current_burst;	/* the current burst we're working on */
     REQ *current_req;		/* the current request we're working on */
-    int trans_seq;
     int current_cpe_action;    
     char *cwmpID;
     char *serial;
+    int current_sess_template;
   } Cwmp_Sess_Private_Data;
 
 enum

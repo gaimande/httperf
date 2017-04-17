@@ -53,6 +53,10 @@
 #include <session.h>
 #include <cwmp.h>
 
+/* Maximum number of sessions that can be defined in the configuration
+   file.  */
+#define MAX_SESSION_TEMPLATES	1000
+
 #ifndef TRUE
 #define TRUE  (1)
 #endif
@@ -84,7 +88,11 @@ static Rate_Generator rg_cwmp;
 /* This is an array rather than a list because we may want different
    httperf clients to start at different places in the sequence of
    sessions. */
-static Cwmp_Sess_Private_Data session_templates;
+static int num_templates;
+static Cwmp_Sess_Private_Data session_templates[MAX_SESSION_TEMPLATES] =
+  {
+    { 0, }
+  };
 
 static void printchar(char **str, int size, int curr_size, int c)
 {   
@@ -111,6 +119,11 @@ int cwmp_snprintf (char *outFile, int size, const char *format, Cwmp_Sess_Privat
     char **out = &outFile;
     char *buf = format;
     int cnt = 0;
+
+    if (NULL == format || NULL == outFile || NULL == priv)
+    {
+        return -1;
+    }
     
     for (; *buf != 0; buf++)
     {   
@@ -153,6 +166,12 @@ cwmp_get_cwmpID (const char *msg, Cwmp_Sess_Private_Data *priv)
 {
     const char *cwmp_node = "<cwmp:ID soap-env:mustUnderstand=\"1\">";
     char *ptr_s, *ptr_e;
+
+    /* We just need to get cwmp ID one time */
+    if (strncmp (priv->cwmpID, priv->serial, sizeof (priv->serial)))
+    {
+        return 0;
+    }
     
     if (NULL != (ptr_s = strstr (msg, cwmp_node)))
     {
@@ -183,29 +202,17 @@ cwmp_build_reply_msg (const REQ *template, Cwmp_Sess_Private_Data *priv)
     if (NULL == priv->cwmpID)
     {
         priv->cwmpID = priv->serial;
-    }
-
-    if (priv->current_req->contents != NULL)
-    {
-        free(priv->current_req->contents);
-        priv->current_req->contents = NULL;
-    }
-
-    if (priv->current_req->uri != NULL)
-    {
-        free(priv->current_req->uri);
-        priv->current_req->uri = NULL;
-    }
+    }    
 
     /* Build URI */
-    memset (buf, 0x0, buf_len);        
+    memset (buf, 0x0, buf_len);
 
     ret = cwmp_snprintf (buf, buf_len, template->uri, priv);
     if (ret >= buf_len)
     {
         fprintf (stderr, "cwmp_snprintf error, output was truncated\n");
         return -1;
-    }
+    }    
 
     priv->current_req->uri = strdup (buf);
     priv->current_req->uri_len = strlen (buf);
@@ -246,31 +253,18 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
       priv->timer = 0;
     }
 
-  if (priv->current_req->contents != NULL)
-  {
-        free (priv->current_req->contents);
-        priv->current_req->contents = NULL;
-  }
-
-  if (priv->current_req->uri != NULL)
-    {
-        free(priv->current_req->uri);
-        priv->current_req->uri = NULL;
-    }
-
-  if (priv->current_req != NULL)
-  {
-        free (priv->current_req);
-        priv->current_req = NULL;
-  }
-
   if (priv->serial != NULL)
   {
         free (priv->serial);
         priv->serial = NULL;
-  }
+  }  
 
   num_active_sess--;
+
+  if (++priv->current_sess_template >= num_templates)
+  {
+    priv->current_sess_template = 0;
+  }
 
   if (0 == param.forever &&
       ++num_sessions_destroyed >= param.cwmp.num_sessions)
@@ -292,26 +286,37 @@ sess_failed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   priv->cwmp_result = CWMP_ERR_NO_RESP;
 }
 
-REQ *
-cwmp_find_req_template (int trans_seq)
+static REQ *
+cwmp_find_req_template (Cwmp_Sess_Private_Data *priv)
 {
-    int i;
-    REQ *req, *req_list_bk;
+    int i, req_idx;
+    int num_req_so_far = 0;
+    BURST *bptr;
+    REQ *rptr;
+    Cwmp_Sess_Private_Data *template;
 
-    if (trans_seq > session_templates.current_burst->num_reqs)
+    template = &session_templates[priv->current_sess_template];
+
+    for (bptr = template->current_burst; bptr != NULL; bptr = bptr->next)
     {
-        fprintf (stderr, "Invalid message sequence %d. Maxinum sequence is %d.\n", trans_seq, session_templates.current_burst->num_reqs);
-        return NULL;
+        num_req_so_far += bptr->num_reqs;
+        rptr = bptr->req_list;
+        
+        if (priv->num_calls_destroyed >= num_req_so_far)
+        {            
+            continue;
+        }
+        
+        req_idx = bptr->num_reqs - (num_req_so_far - priv->num_calls_destroyed);
+
+        for (i = 0; i < req_idx; i++)
+        {
+            rptr = rptr->next;
+        }
+        break;
     }
 
-    req = req_list_bk = session_templates.current_burst->req_list;
-    for (i = 1; i < trans_seq; i++)
-    {        
-        req = req->next;        
-    }
-
-    session_templates.current_burst->req_list = req_list_bk;
-    return req;
+    return rptr;
 }
 
 static void
@@ -333,17 +338,17 @@ issue_calls (Sess *sess, Cwmp_Sess_Private_Data *priv)
   {
     sess_failure (sess);
     return;
-  }  
+  }
 
-  req = priv->current_req;
-
-  req_template = cwmp_find_req_template(priv->trans_seq);
+  req_template = cwmp_find_req_template(priv);
 
   if (req_template == NULL)
     panic ("%s: internal error, cannot find request template for %s\n",
         prog_name, cwmp_cpe_action_name[priv->current_cpe_action]); 
 
   cwmp_build_reply_msg (req_template, priv);
+
+  req = priv->current_req;
   
   snprintf (req->extra_hdrs, sizeof(req->extra_hdrs), "Content-length: %d\r\n", req->contents_len);
   req->extra_hdrs_len = strlen (req->extra_hdrs);
@@ -387,8 +392,6 @@ call_recv_data (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 
   if (NULL != strstr(cp, "<cwmp:InformResponse>"))
   {
-        priv->trans_seq++;
-        
         if (priv->current_cpe_action > CPE_INFORM_DONE)
         {
             priv->num_calls_destroyed = priv->total_num_reqs;
@@ -399,8 +402,6 @@ call_recv_data (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   }
   else if (NULL != strstr(cp, "<cwmp:GetParameterNames>"))
   {
-        priv->trans_seq++;
-        cwmp_get_cwmpID (cp, priv);
         if (priv->current_cpe_action > CPE_REP_ALL_PARAM_NAME)
         {
             priv->num_calls_destroyed = priv->total_num_reqs;
@@ -411,9 +412,14 @@ call_recv_data (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   }
   else if (NULL != strstr(cp, "<cwmp:GetParameterValues>"))
   {
-        priv->trans_seq++;
         priv->current_cpe_action = CPE_REP_ALL_PARAM_VALUE;
-  }  
+  }
+  else
+  {
+        return;
+  }
+
+  cwmp_get_cwmpID (cp, priv);
 }
 
 static void
@@ -444,7 +450,7 @@ call_recv_start (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
     }
     else if (204 == status) /* No Content */
     {
-        if (priv->trans_seq == session_templates.current_burst->num_reqs)
+        if (priv->num_calls_destroyed == (priv->total_num_reqs- 1))
         {
             priv->cwmp_result = CWMP_ERR_NONE;
         }
@@ -473,6 +479,7 @@ user_think_time_expired (struct Timer *t, Any_Type arg)
 
   priv = CWMP_SESS_PRIVATE_DATA (sess);
   priv->timer = 0;
+
   issue_calls (sess, priv);
 }
 
@@ -482,7 +489,7 @@ sess_create (Any_Type arg)
 { 
   static int first_time, cpe_idx;
   int ret, serial_len;
-  Cwmp_Sess_Private_Data *priv;
+  Cwmp_Sess_Private_Data *priv, *template;
   Sess *sess;
 
   if (0 == first_time)
@@ -517,9 +524,13 @@ sess_create (Any_Type arg)
   }
 
   priv = CWMP_SESS_PRIVATE_DATA (sess);
-  priv->current_burst = session_templates.current_burst;
-  priv->total_num_reqs = session_templates.total_num_reqs;
-  priv->num_calls_target = session_templates.current_burst->num_reqs;
+
+  priv->current_sess_template = 0;
+  template = &session_templates[priv->current_sess_template];
+  
+  priv->current_burst = template->current_burst;
+  priv->total_num_reqs = template->total_num_reqs;
+  priv->num_calls_target = template->current_burst->num_reqs;
   
   priv->current_req = (REQ *) malloc (sizeof(REQ));
   if (NULL == priv->current_req)
@@ -544,9 +555,7 @@ sess_create (Any_Type arg)
   {
      fprintf (stderr, "snprintf was truncated.\n");
      return -1;
-  }
-  
-  priv->trans_seq = 1;
+  }    
   
   if (DBG > 0)
     fprintf (stderr, "Starting session, first burst_len = %d\n",
@@ -571,7 +580,14 @@ prepare_for_next_burst (Sess *sess, Cwmp_Sess_Private_Data *priv)
 
       if (priv->current_burst != NULL)
 	{
-	  priv->current_req = priv->current_burst->req_list;
+          priv->current_req = (REQ *) malloc (sizeof(REQ));
+          if (NULL == priv->current_req)
+          {
+             fprintf (stderr, "not enough emeory to allocate\n");
+             return -1;
+          }
+          memset (priv->current_req, 0x0, sizeof(REQ));
+          
 	  priv->num_calls_in_this_burst = 0;
 	  priv->num_calls_target += priv->current_burst->num_reqs;
 
@@ -599,6 +615,24 @@ call_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
     return;
 
   ++priv->num_calls_destroyed;
+
+  if (priv->current_req->contents != NULL)
+  {
+    free (priv->current_req->contents);
+    priv->current_req->contents = NULL;
+  }
+  
+  if (priv->current_req->uri != NULL)
+  {
+    free(priv->current_req->uri);
+    priv->current_req->uri = NULL;
+  }
+
+  if (priv->current_req != NULL)
+  {
+    free(priv->current_req);
+    priv->current_req = NULL;
+  }
 
   if (priv->num_calls_destroyed >= priv->total_num_reqs)
     /* we're done with this session */
@@ -670,6 +704,7 @@ parse_config (void)
   if (fp == NULL)
     panic ("%s: can't open %s\n", prog_name, param.cwmp.file);  
 
+  num_templates = 0;
   sptr = &session_templates;
 
   for (lineno = 1; fgets (line, sizeof (line), fp); lineno++)
@@ -689,6 +724,10 @@ parse_config (void)
 
       if (sptr->current_req == NULL)
 	{
+          num_templates++;
+	  if (num_templates > MAX_SESSION_TEMPLATES)
+	    panic ("%s: too many sessions (%d) specified in %s\n",
+		   prog_name, num_templates, param.wsesslog.file); 
 	  current_burst = sptr->current_burst = new_burst (reqptr);
 	}
       else
