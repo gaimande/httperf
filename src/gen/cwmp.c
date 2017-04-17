@@ -86,6 +86,68 @@ static Rate_Generator rg_cwmp;
    sessions. */
 static Cwmp_Sess_Private_Data session_templates;
 
+static void printchar(char **str, int size, int curr_size, int c)
+{   
+    **str = c;
+    if (curr_size < (size - 1))
+        ++(*str);
+}
+
+static int prints(char **out, int size, int curr_size, const char *string)
+{   
+    int cnt = 0;
+    
+    for ( ; *string ; ++string)
+    {   
+        printchar (out, size, ++curr_size, *string);
+        cnt++;
+    }
+    
+    return cnt;
+}
+
+int cwmp_snprintf (char *outFile, int size, const char *format, Cwmp_Sess_Private_Data *priv)
+{   
+    char **out = &outFile;
+    char *buf = format;
+    int cnt = 0;
+    
+    for (; *buf != 0; buf++)
+    {   
+        if (*buf == '%')
+        {   
+            buf++;
+            if (*buf == '\0')
+                break;
+            
+            if (*buf == '%')
+            {   
+                printchar (out, size, cnt, *buf);
+                cnt++;
+            }
+            else if (*buf == 's')
+            {   
+                cnt += prints (out, size, cnt, priv->serial ? priv->serial : "(NULL)");
+                continue;
+            }
+            else if (*buf == 'i')
+            {   
+                cnt += prints (out, size, cnt, priv->cwmpID ? priv->cwmpID : "(NULL)");
+                continue;
+            }
+        }
+        else
+        {   
+            printchar (out, size, cnt, *buf);
+            cnt++;
+        }
+    }
+
+    if (out) **out = '\0';
+
+    return cnt;
+}
+
 static int
 cwmp_get_cwmpID (const char *msg, Cwmp_Sess_Private_Data *priv)
 {
@@ -113,17 +175,9 @@ cwmp_get_cwmpID (const char *msg, Cwmp_Sess_Private_Data *priv)
 static int
 cwmp_build_reply_msg (const REQ *template, Cwmp_Sess_Private_Data *priv)
 {
-    int len = 0;
-    int ret = 0;
-    int num_replace = 0;
-    char *str = template->contents;
-    const char* pattern_replace = "%s";
-
-    while (NULL != (str = strstr(str, pattern_replace)))
-    {
-        num_replace++;
-        str += strlen(pattern_replace);
-    }
+    int ret;
+    char buf[500000];
+    int buf_len = sizeof(buf);
 
     /* Use a random cwmpID for the first message */
     if (NULL == priv->cwmpID)
@@ -137,41 +191,39 @@ cwmp_build_reply_msg (const REQ *template, Cwmp_Sess_Private_Data *priv)
         priv->current_req->contents = NULL;
     }
 
-    if (num_replace > 0)
+    if (priv->current_req->uri != NULL)
     {
-        len = sizeof(char) * (template->contents_len + strlen(priv->cwmpID) +
-              (num_replace - 1) * strlen(priv->serial) - num_replace * strlen(pattern_replace));
-
-        priv->current_req->contents = calloc(1, len + 1);
-        if (NULL == priv->current_req->contents)
-        {
-            fprintf (stderr, "not enough memory to allocate\n");
-            return -1;
-        }
-        
-        ret = snprintf (priv->current_req->contents, len + 1, template->contents, 
-                        priv->cwmpID, priv->serial, priv->serial);
-        if (ret > len)
-        {
-            fprintf (stderr, "snprintf error\n");
-            return -1;
-        }
-    }
-    else
-    {
-        len = template->contents_len;
-        priv->current_req->contents = strndup (template->contents, len);
-        if (NULL == priv->current_req->contents)
-        {
-            fprintf (stderr, "not enough memory to allocate\n");
-            return -1;
-        }
+        free(priv->current_req->uri);
+        priv->current_req->uri = NULL;
     }
 
-    priv->current_req->contents_len = len;
+    /* Build URI */
+    memset (buf, 0x0, buf_len);        
+
+    ret = cwmp_snprintf (buf, buf_len, template->uri, priv);
+    if (ret >= buf_len)
+    {
+        fprintf (stderr, "cwmp_snprintf error, output was truncated\n");
+        return -1;
+    }
+
+    priv->current_req->uri = strdup (buf);
+    priv->current_req->uri_len = strlen (buf);
+    
+    /* Build content */
+    memset (buf, 0x0, buf_len);  
+    
+    ret = cwmp_snprintf (buf, buf_len, template->contents, priv);
+    if (ret >= buf_len)
+    {
+        fprintf (stderr, "cwmp_snprintf error, output was truncated\n");
+        return -1;
+    }
+
+    priv->current_req->contents = strdup (buf);
+    priv->current_req->contents_len = strlen (buf);
+    
     priv->current_req->method = template->method;
-    priv->current_req->uri = template->uri;
-    priv->current_req->uri_len = template->uri_len;
     priv->current_req->cpe_action = template->cpe_action;
 
     return 0;
@@ -199,6 +251,12 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
         free (priv->current_req->contents);
         priv->current_req->contents = NULL;
   }
+
+  if (priv->current_req->uri != NULL)
+    {
+        free(priv->current_req->uri);
+        priv->current_req->uri = NULL;
+    }
 
   if (priv->current_req != NULL)
   {
