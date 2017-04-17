@@ -231,7 +231,7 @@ cwmp_get_cwmpID (const char *msg, Cwmp_Sess_Private_Data *priv)
     {
         return -1;
     }
-    
+
     priv->cwmpID = strdup(ptr_s);
     
     return 0;
@@ -250,18 +250,6 @@ cwmp_build_reply_msg (const REQ *template, Cwmp_Sess_Private_Data *priv)
         priv->cwmpID = priv->serial;
     }
 
-    if (priv->current_req->contents != NULL)
-    {
-        free(priv->current_req->contents);
-        priv->current_req->contents = NULL;
-    }
-
-    if (priv->current_req->uri != NULL)
-    {
-        free(priv->current_req->uri);
-        priv->current_req->uri = NULL;
-    }   
-    
     /* Build content */
     memset (buf, 0x0, buf_len);  
     
@@ -509,21 +497,7 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   {
      cwmp_test_time_stop = timer_now();
      fprintf (stderr, "Finish connection request for %s\n", priv->serial);
-  }
-
-  /* FIXME */
-  if (priv->current_req->contents != NULL)
-  {
-    free (priv->current_req->contents);
-    priv->current_req->contents = NULL;
-  }
-  
-  
-  if (priv->current_req != NULL)
-  {
-    free (priv->current_req);
-    priv->current_req = NULL;
-  }     
+  } 
 
   if (priv->serial != NULL)
   {
@@ -670,7 +644,14 @@ prepare_for_next_burst (Sess *sess, Cwmp_Sess_Private_Data *priv)
 
       if (priv->current_burst != NULL)
 	{
-	  priv->current_req = priv->current_burst->req_list;
+	  priv->current_req = (REQ *) malloc (sizeof(REQ));
+          if (NULL == priv->current_req)
+          {
+             fprintf (stderr, "not enough emeory to allocate\n");
+             return -1;
+          }
+          memset (priv->current_req, 0x0, sizeof(REQ));
+          
 	  priv->num_calls_in_this_burst = 0;
 	  priv->num_calls_target += priv->current_burst->num_reqs;
 
@@ -698,6 +679,18 @@ call_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
     return;
 
   ++priv->num_calls_destroyed;
+
+  if (priv->current_req->contents != NULL)
+  {
+    free (priv->current_req->contents);
+    priv->current_req->contents = NULL;
+  }
+  
+  if (priv->current_req != NULL)
+  {
+    free(priv->current_req);
+    priv->current_req = NULL;
+  }
 
   if (priv->num_calls_destroyed >= priv->total_num_reqs)
     /* we're done with this session */
