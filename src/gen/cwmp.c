@@ -353,7 +353,7 @@ issue_calls (Sess *sess, Cwmp_Sess_Private_Data *priv, Conn *conn)
 
   req = priv->current_req;
   
-  snprintf (req->extra_hdrs, sizeof(req->extra_hdrs), "Content-length: %d\r\n", req->contents_len);
+  snprintf (req->extra_hdrs, sizeof(req->extra_hdrs), "Content-Length: %d\r\n", req->contents_len);
   req->extra_hdrs_len = strlen (req->extra_hdrs);    
 
   if (req->status_len > 0)
