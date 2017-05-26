@@ -495,8 +495,10 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   }
   else
   {
+     static int cnt;
+
      cwmp_test_time_stop = timer_now();
-     fprintf (stderr, "Finish connection request for %s\n", priv->serial);
+     fprintf (stderr, "Finish connection request for %s, total: %d\n", priv->serial, ++cnt);
   } 
 
   if (priv->serial != NULL)
@@ -1074,6 +1076,7 @@ conn_request (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
 {
   Conn *conn;
   static int first;
+  static int cnt;
   
   assert (et == EV_CONN_REQ && object_is_conn (obj));
 
@@ -1086,7 +1089,7 @@ conn_request (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
   }
 
   cwmp_conn_req_sessions++;
-  fprintf (stderr, "Get connection request for %s%07d\n", param.cwmp.serial_prefix, CWMP_LISTEN_PORT_TO_INDEX (conn->myport));
+  fprintf (stderr, "Get connection request for %s%07d, total: %d\n", param.cwmp.serial_prefix, CWMP_LISTEN_PORT_TO_INDEX (conn->myport), ++cnt);
 
   sess_create(conn, NULL);
 }
