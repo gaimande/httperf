@@ -249,7 +249,7 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
     }
   }
 
-  if (0 == param.forever)
+  if (verbose && 0 == param.forever)
   {
     process_bar_print();
   }
@@ -274,7 +274,7 @@ call_send_start (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
     st.num_inform_completed++;
   }
 
-  if (0 == param.forever)
+  if (verbose && 0 == param.forever)
   {
     process_bar_print();
   }
