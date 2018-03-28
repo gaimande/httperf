@@ -1,31 +1,31 @@
 /*
  * Copyright (C) 2000-2007 Hewlett-Packard Company
- * 
+ *
  * This file is part of httperf, a web server performance measurment tool.
- * 
+ *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
  * Software Foundation; either version 2 of the License, or (at your option)
  * any later version.
- * 
+ *
  * In addition, as a special exception, the copyright holders give permission
  * to link the code of this work with the OpenSSL project's "OpenSSL" library
- * (or with modified versions of it that use the same license as the "OpenSSL" 
+ * (or with modified versions of it that use the same license as the "OpenSSL"
  * library), and distribute linked combinations including the two.  You must
  * obey the GNU General Public License in all respects for all of the code
  * used other than "OpenSSL".  If you modify this file, you may extend this
  * exception to your version of the file, but you are not obligated to do so.
  * If you do not wish to do so, delete this exception statement from your
  * version.
- * 
- * This program is distributed in the hope that it will be useful, but WITHOUT 
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
  * more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License along
  * with this program; if not, write to the Free Software Foundation, Inc., 51
- * Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA 
+ * Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #include "config.h"
@@ -119,7 +119,7 @@ static struct timeval select_timeout;
 
 #ifdef HAVE_POLL
 static struct pollfd *pfds;
-static int poll_timeout = 3000;                 /* Default timeout 3 seconds */
+static int poll_timeout = 0;                 /* Default timeout 3 seconds */
 #endif /* HAVE_POLL */
 
 static struct sockaddr_in myaddr;
@@ -198,7 +198,7 @@ hash_code(const char *server, size_t server_len, int port)
 	int             ch;
 
 	/*
-	 * Basically the ELF hash algorithm: 
+	 * Basically the ELF hash algorithm:
 	 */
 
 	while ((ch = *cp++) != '\0') {
@@ -395,7 +395,7 @@ clear_active(Conn * s, enum IO_DIR dir)
         }
 #else
 	fd_set *	fdset;
-	
+
 	if (dir == WRITE)
 		fdset = &wrfds;
 	else
@@ -434,7 +434,7 @@ set_active(Conn * s, enum IO_DIR dir)
 		min_sd = sd;
 #else
 	fd_set *	fdset;
-	
+
 	if (dir == WRITE)
 		fdset = &wrfds;
 	else
@@ -545,7 +545,7 @@ do_send(Conn * conn)
 				break;
 			} else {
 				/*
-				 * we're done with this fragment: 
+				 * we're done with this fragment:
 				 */
 				nsent -= iovp->iov_len;
 				*iovp = call->req.iov_saved;
@@ -556,7 +556,7 @@ do_send(Conn * conn)
 		call->req.iov_index = iovp - call->req.iov;
 		if (call->req.iov_index < NELEMS(call->req.iov)) {
 			/*
-			 * there are more header bytes to write 
+			 * there are more header bytes to write
 			 */
 			call->timeout =
 			    param.timeout ? timer_now() + param.timeout : 0.0;
@@ -565,7 +565,7 @@ do_send(Conn * conn)
 		}
 
 		/*
-		 * we're done with sending this request 
+		 * we're done with sending this request
 		 */
 		conn->sendq = call->sendq_next;
 		if (!conn->sendq) {
@@ -581,8 +581,8 @@ do_send(Conn * conn)
 
 		/*
 		 * get ready to receive matching reply (note that we
-		 * implicitly pass on the reference to the call from the sendq 
-		 * to the recvq): 
+		 * implicitly pass on the reference to the call from the sendq
+		 * to the recvq):
 		 */
 		call->recvq_next = 0;
 		if (!conn->recvq)
@@ -621,7 +621,7 @@ recv_done(Call * call)
 		conn->recvq_tail = 0;
 	}
 	/*
-	 * we're done with receiving this request 
+	 * we're done with receiving this request
 	 */
 	arg.l = 0;
 	event_signal(EV_CALL_RECV_STOP, (Object *) call, arg);
@@ -678,7 +678,7 @@ do_recv(Conn * s)
 
 	if (DBG > 3) {
 		/*
-		 * dump received data in hex & ascii: 
+		 * dump received data in hex & ascii:
 		 */
 
 		fprintf(stderr, "do_recv.%lu: received reply data:\n", c->id);
@@ -699,7 +699,7 @@ do_recv(Conn * s)
 	}
 
 	/*
-	 * process the replies in this buffer: 
+	 * process the replies in this buffer:
 	 */
 
 	buf_len = nread;
@@ -708,7 +708,7 @@ do_recv(Conn * s)
 		c = s->recvq;
 		assert(c);
 		/*
-		 * sets right start time, but doesn't update each packet 
+		 * sets right start time, but doesn't update each packet
 		 */
 		if (s->state == S_REPLY_STATUS) {
 			c->timeout = param.timeout + param.think_timeout;
@@ -932,7 +932,7 @@ core_init(void)
 		core_add_address(myaddr.sin_addr);
 
 	/*
-	 * Don't disturb just because a TCP connection closed on us... 
+	 * Don't disturb just because a TCP connection closed on us...
 	 */
 	signal(SIGPIPE, SIG_IGN);
 
@@ -955,21 +955,21 @@ core_init(void)
 		fprintf(stderr,
 		    "%s: failed to add timer event: %s", prog_name,
 		    strerror(errno));
-	}	
+	}
 #else
 #ifdef DONT_POLL
 	/*
-	 * This causes select() to take several milliseconds on both Linux/x86 
-	 * and HP-UX 10.20.  
+	 * This causes select() to take several milliseconds on both Linux/x86
+	 * and HP-UX 10.20.
 	 */
 	select_timeout.tv_sec = (u_long) TIMER_INTERVAL;
 	select_timeout.tv_usec = (u_long) (TIMER_INTERVAL * 1e6);
 #else
 	/*
 	 * This causes httperf to become a CPU hog as it polls for
-	 * filedescriptors to become readable/writable.  This is OK as long as 
+	 * filedescriptors to become readable/writable.  This is OK as long as
 	 * httperf is the only (interesting) user-level process that executes
-	 * on a machine.  
+	 * on a machine.
 	 */
 	select_timeout.tv_sec = 0;
 	select_timeout.tv_usec = 0;
@@ -977,7 +977,7 @@ core_init(void)
 #endif
 
 	/*
-	 * boost open file limit to the max: 
+	 * boost open file limit to the max:
 	 */
 	if (getrlimit(RLIMIT_NOFILE, &rlimit) < 0) {
 		fprintf(stderr,
@@ -1142,7 +1142,7 @@ core_connect(Conn * s)
 
 	/*
 	 * Disable Nagle algorithm so we don't delay needlessly when
-	 * pipelining requests.  
+	 * pipelining requests.
 	 */
 	optval = 1;
 	if (setsockopt(sd, SOL_TCP, TCP_NODELAY, &optval, sizeof(optval)) < 0) {
@@ -1253,7 +1253,7 @@ core_connect(Conn * s)
 		/*
 		 * The socket becomes writable only after the connection has
 		 * been established.  Hence we wait for writability to detect
-		 * connection establishment.  
+		 * connection establishment.
 		 */
 		s->state = S_CONNECTING;
 		set_active(s, WRITE);
@@ -1299,7 +1299,7 @@ core_send(Conn * conn, Call * call)
 		call->req.iov[IE_HOST].iov_len = 0;
 	} else if (!call->req.iov[IE_HOST].iov_base) {
 		/*
-		 * Default call's hostname to connection's hostname: 
+		 * Default call's hostname to connection's hostname:
 		 */
 		call->req.iov[IE_HOST].iov_base = (caddr_t) conn->fqdname;
 		call->req.iov[IE_HOST].iov_len = conn->fqdname_len;
@@ -1310,7 +1310,7 @@ core_send(Conn * conn, Call * call)
 	 * understand.  If we send HTTP/1.1, it doesn't mean that the server
 	 * has to speak HTTP/1.1.  In other words, sending an HTTP/1.1 header
 	 * leaves it up to the server whether it wants to reply with a 1.0 or
-	 * 1.1 reply.  
+	 * 1.1 reply.
 	 */
 	switch (call->req.version) {
 	case 0x10000:
@@ -1347,7 +1347,7 @@ core_send(Conn * conn, Call * call)
 	call->req.iov_saved = call->req.iov[0];
 
 	/*
-	 * insert call into connection's send queue: 
+	 * insert call into connection's send queue:
 	 */
 	call_inc_ref(call);
 	call->sendq_next = 0;
@@ -1387,7 +1387,7 @@ core_close(Conn * conn)
 	}
 
 	/*
-	 * first, get rid of all pending calls: 
+	 * first, get rid of all pending calls:
 	 */
 	for (call = conn->sendq; call; call = call_next) {
 		call_next = call->sendq_next;
@@ -1423,7 +1423,7 @@ core_close(Conn * conn)
 #else
 		FD_CLR(sd, &wrfds);
 		FD_CLR(sd, &rdfds);
-#endif /* HAVE_POLL */                
+#endif /* HAVE_POLL */
 #endif
 		conn->reading = 0;
 		conn->writing = 0;
@@ -1432,9 +1432,9 @@ core_close(Conn * conn)
 		port_put(conn->myaddr, conn->myport);
 
 	/*
-	 * A connection that has been closed is not useful anymore, so we give 
-	 * up the reference obtained when creating the session.  This normally 
-	 * initiates destruction of the connection.  
+	 * A connection that has been closed is not useful anymore, so we give
+	 * up the reference obtained when creating the session.  This normally
+	 * initiates destruction of the connection.
 	 */
 	conn_dec_ref(conn);
 }
@@ -1489,7 +1489,7 @@ core_loop(void)
 	                    if (ev.filter == EVFILT_READ && conn->recvq)
 	                        do_recv(conn);
 	                }
-	                    
+
 	                conn_dec_ref(conn);
 			break;
 		}
@@ -1502,10 +1502,10 @@ core_loop (void)
     int is_readable, is_writable, n, sd;
     Conn      *conn;
     Any_Type   arg;
-    
+
     while (running)
     {
-        timer_tick();        
+        timer_tick();
 
         SYSCALL(POLL, n = poll (pfds, max_sd + 1, poll_timeout));
 
@@ -1520,7 +1520,7 @@ core_loop (void)
             }
             continue;
         }
-        
+
         for (sd = min_sd; sd <= max_sd; sd++)
         {
             if (0 == pfds[sd].revents)
@@ -1529,17 +1529,17 @@ core_loop (void)
             }
 
             is_readable = is_writable = 0;
-            
+
             if (pfds[sd].revents & POLLIN)
             {
                 is_readable = 1;
             }
-   
+
             if (pfds[sd].revents & POLLOUT)
             {
                 is_writable = 1;
             }
-    
+
             if (is_readable || is_writable)
             {
                 /*
@@ -1548,7 +1548,7 @@ core_loop (void)
                  */
                 conn = sd_to_conn[sd];
                 conn_inc_ref(conn);
-    
+
                 if (conn->watchdog)
                 {
                     timer_cancel(conn->watchdog);
@@ -1576,9 +1576,9 @@ core_loop (void)
                     if (is_readable && conn->recvq)
                         do_recv(conn);
                 }
-                        
+
                 conn_dec_ref(conn);
-                        
+
                 if (--n > 0)
                 {
                     timer_tick();
@@ -1587,7 +1587,7 @@ core_loop (void)
                 {
                     break;
                 }
-            }                
+            }
         }
     }
 }
@@ -1600,7 +1600,7 @@ core_loop(void)
 	fd_mask    mask;
 	Any_Type   arg;
 	Conn      *conn;
- 
+
 	while (running) {
 	    struct timeval  tv = select_timeout;
 
@@ -1626,7 +1626,7 @@ core_loop(void)
 	    while (n > 0) {
 	        /*
 	         * find the index of the fdmask that has something
-	         * going on: 
+	         * going on:
 	         */
 	        do {
 	            ++i;
@@ -1643,7 +1643,7 @@ core_loop(void)
 	                --n;
 	                is_readable = (FD_ISSET(sd, &readable) && FD_ISSET(sd, &rdfds));
 	                is_writable = (FD_ISSET(sd, &writable) && FD_ISSET(sd, &wrfds));
-	                
+
 	                if (is_readable || is_writable) {
 	                    /*
 	                     * only handle sockets that
@@ -1674,9 +1674,9 @@ core_loop(void)
 	                        if (is_readable && conn->recvq)
 	                            do_recv(conn);
 	                    }
-	                    
+
 	                    conn_dec_ref(conn);
-	                    
+
 	                    if (n > 0)
 	                         timer_tick();
 	                }

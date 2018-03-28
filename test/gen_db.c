@@ -101,7 +101,7 @@ int main (int argc, char *argv[])
             goto __out;
         }
 
-        fprintf (fo, line, serial, serial, serial); 
+        fprintf (fo, line, serial, serial, serial, serial);
     }
 
 __out:
